@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tapedido-food",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:react"],
+      "port": 5173
+    }
+  ]
+}

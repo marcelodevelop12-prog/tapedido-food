@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(if \\(-not $?\\) { \"Directory does not exist or is empty\" })",
+      "PowerShell(cd \"C:\\\\Users\\\\ANDERSON\\\\tapedido-food\"; Start-Job -ScriptBlock { cd \"C:\\\\Users\\\\ANDERSON\\\\tapedido-food\"; npx vite --host } | Out-Null; Start-Sleep 5; \"Dev server starting...\")",
+      "mcp__Claude_Preview__preview_start",
+      "PowerShell(node \"C:\\\\Users\\\\ANDERSON\\\\tapedido-food\\\\scripts\\\\generate-icons.js\")",
+      "PowerShell($proc = Get-NetTCPConnection -LocalPort 5173 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if \\($proc\\) { Stop-Process -Id $proc.OwningProcess -Force; \"Killed PID $\\($proc.OwningProcess\\)\" } else { \"Port 5173 is free\" })",
+      "Bash(Get-ChildItem \"C:\\\\Users\\\\ANDERSON\\\\tapedido-food-garcom\" -Force)",
+      "Bash(ls -la /mnt/c/Users/ANDERSON/tapedido-food-garcom/ 2>&1)",
+      "Bash(npm run *)",
+      "mcp__4726faba-c736-4ec6-8e24-f5309a84d8e2__execute_sql",
+      "Bash(npm list *)",
+      "Bash(git -C \"C:\\\\Users\\\\ANDERSON\\\\tapedido-food\" status)",
+      "Bash(git -C \"C:\\\\Users\\\\ANDERSON\\\\tapedido-food\" diff)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Users\\\\ANDERSON\\\\tapedido-food\" -Force | Select-Object Name, @{Name='Type';Expression={if\\($_.PSIsContainer\\){'Dir'}else{'File'}}})",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
+    ]
+  }
+}
