@@ -127,12 +127,16 @@ async function criarLoja(db, nomeLoja) {
       return null
     }
 
-    try {
-      await sb().from('configuracoes').insert({
-        loja_id: lojaId,
-        codigo_garcom: '1234',
-      })
-    } catch {}
+    const { error: errCfg } = await sb().from('configuracoes').insert({
+      loja_id: lojaId,
+      codigo_garcom: '1234',
+      codigo_loja: codigoLoja,
+    })
+    if (errCfg) {
+      console.error('[supabaseSync] erro ao criar configuracoes:', errCfg.message, errCfg.code)
+      // Tenta UPDATE caso a linha já exista
+      await sb().from('configuracoes').update({ codigo_loja: codigoLoja }).eq('loja_id', lojaId)
+    }
 
     salvarLog(db, 'criar_loja', 'sucesso')
     return { lojaId, codigoLoja }
