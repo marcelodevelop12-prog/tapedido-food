@@ -417,7 +417,7 @@ const dbModule = {
       }
 
       const machineId = getMachineId()
-      const chaveFinal = chave.replace(/[^A-Z0-9]/gi, '').toUpperCase()
+      const chaveFinal = chave.replace(/\s/g, '').toUpperCase()
 
       try {
         console.log('[licenca:ativar] buscando chave:', chaveFinal)

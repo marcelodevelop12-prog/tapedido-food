@@ -31,7 +31,7 @@ export default function Ativacao({ onAtivado }) {
         return
       }
 
-      const resultado = await window.api.licenca.ativar(chave.replace(/[^A-Z0-9]/gi, '').toUpperCase())
+      const resultado = await window.api.licenca.ativar(chave.replace(/\s/g, '').toUpperCase())
       if (resultado.sucesso) {
         toast.success(`Licença ativada com sucesso! Bem-vindo${resultado.nomeCliente ? ', ' + resultado.nomeCliente : ''}!`)
         setTimeout(() => onAtivado(false), 1500)
