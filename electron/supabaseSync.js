@@ -395,18 +395,27 @@ async function sincronizarTodasMesas(lojaId, mesas) {
       localId: m.id,
       supabaseId: m.supabase_id || crypto.randomUUID(),
       numero: m.numero,
+      nome: m.nome || `Mesa ${m.numero}`,
       status: m.status || 'livre',
     }))
-    const rows = mapeamento.map(({ supabaseId, numero, status }) => ({
+    const rows = mapeamento.map(({ supabaseId, numero, nome, status }) => ({
       id: supabaseId,
       loja_id: lojaId,
       numero,
+      nome,
       status,
     }))
-    const { error } = await sb().from('mesas').upsert(rows, { onConflict: 'id' })
-    if (error) return []
+    console.log('[supabaseSync] sincronizarTodasMesas: enviando', rows.length, 'mesas para loja_id', lojaId)
+    console.log('[supabaseSync] rows:', JSON.stringify(rows))
+    const { error, data } = await sb().from('mesas').upsert(rows, { onConflict: 'id' })
+    if (error) {
+      console.error('[supabaseSync] sincronizarTodasMesas ERRO:', error.message, error.code, error.details, error.hint)
+      return []
+    }
+    console.log('[supabaseSync] sincronizarTodasMesas OK:', mapeamento.length, 'mesas. data:', JSON.stringify(data))
     return mapeamento.map(({ localId, supabaseId }) => ({ localId, supabaseId }))
-  } catch {
+  } catch (err) {
+    console.error('[supabaseSync] sincronizarTodasMesas exceção:', err?.message || err)
     return []
   }
 }
