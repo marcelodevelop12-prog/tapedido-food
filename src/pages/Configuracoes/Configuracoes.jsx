@@ -3,7 +3,7 @@ import { Save, Plus, Trash2, RefreshCw, Store, Printer, Truck, Info, ShoppingCar
 import toast from 'react-hot-toast'
 import { api } from '../../lib/api'
 
-const APP_GARCOM_URL = 'https://tapedido-food-garcom.vercel.app/'
+const APP_GARCOM_URL = 'https://tapedido-food-garcom.vercel.app/?reset=1'
 
 const isElectron = typeof window !== 'undefined' && window.api
 
