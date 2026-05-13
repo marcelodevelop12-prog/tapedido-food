@@ -25,6 +25,7 @@ module.exports = {
   artifactName: 'tapedido-food-setup-${version}.${ext}',
   nsis: {
     oneClick: false,
+    allowElevation: true,
     allowToChangeInstallationDirectory: true,
     createDesktopShortcut: true,
     shortcutName: 'TáPedido Food',

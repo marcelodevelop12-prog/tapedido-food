@@ -6,7 +6,7 @@ let mainWindow = null
 try {
   autoUpdater = require('electron-updater').autoUpdater
   autoUpdater.autoDownload = false
-  autoUpdater.autoInstallOnAppQuit = true
+  autoUpdater.autoInstallOnAppQuit = false
   autoUpdater.logger = null
 } catch {}
 
@@ -22,16 +22,25 @@ function setupUpdater(win) {
     mainWindow?.webContents.send('update:progresso', { percent: Math.round(progress.percent) })
   })
 
-  autoUpdater.on('update-downloaded', () => {
-    mainWindow?.webContents.send('update:baixado')
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log('[updater] download concluído, versão:', info.version)
+    // Notifica o renderer para exibir o botão "Reiniciar e Atualizar"
+    mainWindow?.webContents.send('update:baixado', { version: info.version })
   })
 
-  autoUpdater.on('error', () => {})
+  autoUpdater.on('error', (err) => {
+    console.error('[updater] erro:', err.message)
+    mainWindow?.webContents.send('update:erro', { message: err.message })
+  })
 
   // Weekly check, only in packaged builds
   if (app.isPackaged) {
-    setTimeout(() => { try { autoUpdater.checkForUpdates() } catch {} }, 5000)
-    setInterval(() => { try { autoUpdater.checkForUpdates() } catch {} }, 7 * 24 * 60 * 60 * 1000)
+    const checkSilently = () =>
+      autoUpdater.checkForUpdates().catch(err =>
+        console.log('[updater] sem updates:', err.message)
+      )
+    setTimeout(checkSilently, 5000)
+    setInterval(checkSilently, 7 * 24 * 60 * 60 * 1000)
   }
 }
 
@@ -43,12 +52,21 @@ function registrarHandlers() {
 
   ipcMain.handle('update:baixar', async () => {
     if (!autoUpdater) return
-    try { await autoUpdater.downloadUpdate() } catch {}
+    try { await autoUpdater.downloadUpdate() } catch (err) {
+      console.error('[updater] erro ao baixar:', err.message)
+    }
   })
 
   ipcMain.handle('update:instalar', () => {
     if (!autoUpdater) return
-    try { autoUpdater.quitAndInstall() } catch {}
+    console.log('[updater] iniciando quitAndInstall...')
+    try {
+      // isSilent=false → exibe a UI do instalador (necessário para UAC/elevação)
+      // isForceRunAfter=true → reabre o app após instalar
+      autoUpdater.quitAndInstall(false, true)
+    } catch (err) {
+      console.error('[updater] erro em quitAndInstall:', err.message)
+    }
   })
 
   ipcMain.handle('update:versao', () => app.getVersion())
