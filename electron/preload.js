@@ -169,7 +169,6 @@ contextBridge.exposeInMainWorld('api', {
   supabase: {
     statusConexao: () => invoke('supabase:statusConexao'),
     sincronizarLoja: () => invoke('supabase:sincronizarLoja'),
-    sincronizarMesas: () => invoke('supabase:sincronizarMesas'),
   },
 
   garcons: {

@@ -104,9 +104,23 @@ app.whenReady().then(() => {
 
   // Mesas
   ipcMain.handle('mesas:listar', () => db.mesas.listar())
-  ipcMain.handle('mesas:criar', (_, dados) => db.mesas.criar(dados))
-  ipcMain.handle('mesas:atualizar', (_, dados) => db.mesas.atualizar(dados))
-  ipcMain.handle('mesas:deletar', (_, id) => db.mesas.deletar(id))
+  ipcMain.handle('mesas:criar', async (_, dados) => {
+    const mesa = db.mesas.criar(dados)
+    const lojaId = db.config.get()?.supabase_loja_id
+    if (lojaId) await supabaseSync.sincronizarMesaCriada(lojaId, mesa)
+    return mesa
+  })
+  ipcMain.handle('mesas:atualizar', async (_, dados) => {
+    const mesa = db.mesas.atualizar(dados)
+    const lojaId = db.config.get()?.supabase_loja_id
+    if (lojaId && mesa.supabase_id) await supabaseSync.sincronizarMesaAtualizada(lojaId, mesa)
+    return mesa
+  })
+  ipcMain.handle('mesas:deletar', async (_, id) => {
+    const resultado = db.mesas.deletar(id)
+    if (resultado.supabase_id) await supabaseSync.sincronizarMesaDeletada(resultado.supabase_id)
+    return resultado
+  })
 
   // Comandas
   ipcMain.handle('comandas:abrir', (_, mesaId) => db.comandas.abrir(mesaId))
@@ -240,37 +254,6 @@ app.whenReady().then(() => {
       return { sucesso: true, codigoLoja: resultado.codigoLoja }
     } catch (err) {
       console.error('[SYNC] erro geral:', err)
-      return { sucesso: false, erro: err.message }
-    }
-  })
-
-  ipcMain.handle('supabase:sincronizarMesas', async () => {
-    try {
-      const cfg = db.config.get()
-      console.log('[SYNC MESAS] cfg.supabase_loja_id:', cfg?.supabase_loja_id)
-      if (!cfg?.supabase_loja_id) return { sucesso: false, erro: 'Loja não sincronizada com o Supabase ainda' }
-      const todasMesas = db.mesas.listar()
-      const semSync = todasMesas.filter(m => !m.supabase_id)
-      console.log('[SYNC MESAS] total mesas no SQLite:', todasMesas.length, '| sem supabase_id:', semSync.length)
-      console.log('[SYNC MESAS] mesas sem sync:', JSON.stringify(semSync.map(m => ({ id: m.id, numero: m.numero, nome: m.nome, supabase_id: m.supabase_id }))))
-      // Sincroniza TODAS as mesas (upsert é idempotente) para corrigir casos em que
-      // o supabase_id foi salvo no SQLite mas o insert no Supabase falhou silenciosamente
-      const mapeamento = await supabaseSync.sincronizarTodasMesas(cfg.supabase_loja_id, todasMesas)
-      console.log('[SYNC MESAS] mapeamento retornado:', JSON.stringify(mapeamento))
-      if (mapeamento.length === 0 && todasMesas.length > 0) {
-        return { sucesso: false, erro: 'Falha ao inserir mesas no Supabase. Verifique os logs do console.' }
-      }
-      const rawDb = db.getRawDb()
-      for (const { localId, supabaseId } of mapeamento) {
-        rawDb.prepare('UPDATE mesas SET supabase_id = ? WHERE id = ?').run(supabaseId, localId)
-      }
-      const novasSincronizadas = mapeamento.filter(({ localId }) =>
-        semSync.some(m => m.id === localId)
-      ).length
-      console.log('[SYNC MESAS] novas sincronizadas:', novasSincronizadas, '| total upsertadas:', mapeamento.length)
-      return { sucesso: true, sincronizadas: novasSincronizadas }
-    } catch (err) {
-      console.error('[SYNC MESAS] erro:', err)
       return { sucesso: false, erro: err.message }
     }
   })

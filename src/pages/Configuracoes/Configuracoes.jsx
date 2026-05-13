@@ -41,7 +41,6 @@ export default function Configuracoes() {
   const [formGarcom, setFormGarcom] = useState({ nome: '', codigo: '' })
   const [salvandoGarcom, setSalvandoGarcom] = useState(false)
   const [sincronizando, setSincronizando] = useState(false)
-  const [sincronizandoMesas, setSincronizandoMesas] = useState(false)
 
   useEffect(() => {
     carregar()
@@ -261,22 +260,6 @@ export default function Configuracoes() {
     finally { setSincronizando(false) }
   }
 
-  async function sincronizarMesas() {
-    setSincronizandoMesas(true)
-    try {
-      const resultado = await api.supabase.sincronizarMesas()
-      if (resultado.sucesso) {
-        if (resultado.sincronizadas === 0) {
-          toast.success('Todas as mesas já estavam sincronizadas!')
-        } else {
-          toast.success(`${resultado.sincronizadas} mesa(s) sincronizada(s) com sucesso!`)
-        }
-      } else {
-        toast.error(resultado.erro || 'Erro ao sincronizar mesas')
-      }
-    } catch { toast.error('Erro ao sincronizar mesas') }
-    finally { setSincronizandoMesas(false) }
-  }
 
   function copiarCodigo(codigo) {
     navigator.clipboard.writeText(codigo).then(() => toast.success('Código copiado!')).catch(() => toast.error('Não foi possível copiar'))
@@ -752,25 +735,6 @@ export default function Configuracoes() {
             </div>
           )}
 
-          {config.codigo_loja && (
-            <div className="flex">
-              <button
-                onClick={sincronizarMesas}
-                disabled={sincronizandoMesas}
-                className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors"
-              >
-                {sincronizandoMesas ? (
-                  <>
-                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    Sincronizando...
-                  </>
-                ) : '🔄 Sincronizar Mesas'}
-              </button>
-            </div>
-          )}
 
           {/* Lista de garçons */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">

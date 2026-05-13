@@ -653,35 +653,21 @@ const dbModule = {
         INSERT INTO mesas (numero, nome, status, capacidade) VALUES (?, ?, 'livre', ?)
       `).run(dados.numero, dados.nome || `Mesa ${dados.numero}`, dados.capacidade || 4)
       const mesa = db.prepare('SELECT * FROM mesas WHERE id = ?').get(result.lastInsertRowid)
-      const lojaId = db.prepare('SELECT supabase_loja_id FROM configuracoes LIMIT 1').get()?.supabase_loja_id
-      if (lojaId) {
-        const supabaseId = crypto.randomUUID()
-        db.prepare('UPDATE mesas SET supabase_id = ? WHERE id = ?').run(supabaseId, mesa.id)
-        mesa.supabase_id = supabaseId
-        supabaseSync.sincronizarMesaCriada(lojaId, mesa).catch(err => {
-          console.error('[db] mesas.criar: falha ao sincronizar com Supabase:', err?.message || err)
-        })
-      }
+      const supabaseId = crypto.randomUUID()
+      db.prepare('UPDATE mesas SET supabase_id = ? WHERE id = ?').run(supabaseId, mesa.id)
+      mesa.supabase_id = supabaseId
       return mesa
     },
     atualizar(dados) {
       const { id, ...rest } = dados
       const cols = Object.keys(rest).map(k => `${k} = ?`).join(', ')
       db.prepare(`UPDATE mesas SET ${cols} WHERE id = ?`).run(...Object.values(rest), id)
-      const mesa = db.prepare('SELECT * FROM mesas WHERE id = ?').get(id)
-      const lojaId = db.prepare('SELECT supabase_loja_id FROM configuracoes LIMIT 1').get()?.supabase_loja_id
-      if (lojaId && mesa.supabase_id) {
-        supabaseSync.sincronizarMesaAtualizada(lojaId, mesa).catch(() => {})
-      }
-      return mesa
+      return db.prepare('SELECT * FROM mesas WHERE id = ?').get(id)
     },
     deletar(id) {
       const mesa = db.prepare('SELECT * FROM mesas WHERE id = ?').get(id)
       db.prepare('DELETE FROM mesas WHERE id = ?').run(id)
-      if (mesa?.supabase_id) {
-        supabaseSync.sincronizarMesaDeletada(mesa.supabase_id).catch(() => {})
-      }
-      return { sucesso: true }
+      return { sucesso: true, supabase_id: mesa?.supabase_id || null }
     },
   },
 

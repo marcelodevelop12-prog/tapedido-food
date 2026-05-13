@@ -311,39 +311,36 @@ async function deletarGarcom(id) {
 
 async function sincronizarMesaCriada(lojaId, mesa) {
   if (!lojaId) return
-  try {
-    const { error } = await sb().from('mesas').insert({
-      id: mesa.supabase_id,
-      loja_id: lojaId,
-      numero: mesa.numero,
-      nome: mesa.nome || `Mesa ${mesa.numero}`,
-      status: mesa.status || 'livre',
-    })
-    if (error) {
-      console.error('[supabaseSync] sincronizarMesaCriada ERRO:', error.message, error.code, error.details)
-    } else {
-      console.log('[supabaseSync] sincronizarMesaCriada OK: mesa', mesa.numero, '→ supabase_id', mesa.supabase_id)
-    }
-  } catch (err) {
-    console.error('[supabaseSync] sincronizarMesaCriada exceção:', err?.message || err)
+  const { error } = await sb().from('mesas').insert({
+    id: mesa.supabase_id,
+    loja_id: lojaId,
+    numero: mesa.numero,
+    status: mesa.status || 'livre',
+  })
+  if (error) {
+    console.error('[supabaseSync] sincronizarMesaCriada ERRO:', error.message, error.code, error.details)
+  } else {
+    console.log('[supabaseSync] sincronizarMesaCriada OK: mesa', mesa.numero, '→', mesa.supabase_id)
   }
 }
 
 async function sincronizarMesaAtualizada(lojaId, mesa) {
   if (!lojaId || !mesa.supabase_id) return
-  try {
-    await sb().from('mesas').update({
-      numero: mesa.numero,
-      status: mesa.status || 'livre',
-    }).eq('id', mesa.supabase_id)
-  } catch {}
+  const { error } = await sb().from('mesas').update({
+    numero: mesa.numero,
+    status: mesa.status || 'livre',
+  }).eq('id', mesa.supabase_id)
+  if (error) {
+    console.error('[supabaseSync] sincronizarMesaAtualizada ERRO:', error.message, error.code)
+  }
 }
 
 async function sincronizarMesaDeletada(supabaseId) {
   if (!supabaseId) return
-  try {
-    await sb().from('mesas').delete().eq('id', supabaseId)
-  } catch {}
+  const { error } = await sb().from('mesas').delete().eq('id', supabaseId)
+  if (error) {
+    console.error('[supabaseSync] sincronizarMesaDeletada ERRO:', error.message, error.code)
+  }
 }
 
 async function fecharComandaSupabase(mesaSupabaseId) {
