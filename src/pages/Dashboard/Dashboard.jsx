@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react'
-import { TrendingUp, ShoppingBag, AlertTriangle, DollarSign, Clock, Package, ChevronRight } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { TrendingUp, ShoppingBag, AlertTriangle, DollarSign, Clock, Package, ChevronRight, Bell, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { formatarMoeda, formatarHora, statusPedidoLabel, statusPedidoCor } from '../../lib/utils'
+import { useRealtimePedidos } from '../../hooks/useRealtimePedidos'
 
 function CardMetrica({ titulo, valor, icone: Icone, cor, subtitulo }) {
   return (
@@ -20,22 +22,34 @@ function CardMetrica({ titulo, valor, icone: Icone, cor, subtitulo }) {
   )
 }
 
+const PERIODOS = [
+  { value: 'hoje', label: 'Hoje' },
+  { value: '7dias', label: '7 dias' },
+  { value: '30dias', label: '30 dias' },
+]
+
 export default function Dashboard() {
   const [metricas, setMetricas] = useState(null)
   const [pedidosAbertos, setPedidosAbertos] = useState([])
   const [alertasEstoque, setAlertasEstoque] = useState([])
   const [carregando, setCarregando] = useState(true)
+  const [periodo, setPeriodo] = useState('hoje')
+
+  // Realtime: escuta pedidos novos do garçom
+  const { pedidosNovos, limparPedidos } = useRealtimePedidos(() => {
+    carregarDados(periodo)
+  })
 
   useEffect(() => {
-    carregarDados()
-    const intervalo = setInterval(carregarDados, 30000)
+    carregarDados(periodo)
+    const intervalo = setInterval(() => carregarDados(periodo), 30000)
     return () => clearInterval(intervalo)
-  }, [])
+  }, [periodo])
 
-  async function carregarDados() {
+  async function carregarDados(p = periodo) {
     try {
       const [dashboard, pedidos, alertas] = await Promise.all([
-        api.pedidos.dashboard(),
+        api.pedidos.dashboard(p),
         api.pedidos.listar({ status: null }),
         api.estoque.alertas(),
       ])
@@ -59,27 +73,83 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 fade-in">
-      <div>
-        <h2 className="text-xl font-bold text-gray-800">Visão Geral</h2>
-        <p className="text-sm text-gray-500">Resumo do dia de hoje</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-xl font-bold text-gray-800">Visão Geral</h2>
+          <p className="text-sm text-gray-500">
+            {periodo === 'hoje' ? 'Resumo do dia de hoje' : periodo === '7dias' ? 'Últimos 7 dias' : 'Últimos 30 dias'}
+          </p>
+        </div>
+        <div className="flex border border-gray-200 rounded-lg overflow-hidden">
+          {PERIODOS.map(p => (
+            <button
+              key={p.value}
+              onClick={() => setPeriodo(p.value)}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${periodo === p.value ? 'bg-orange-500 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {/* Alerta de pedidos novos do garçom */}
+      {pedidosNovos.length > 0 && (
+        <div className="flex items-center justify-between bg-orange-500 text-white rounded-xl px-5 py-3.5 shadow-md animate-pulse">
+          <div className="flex items-center gap-3">
+            <Bell size={20} className="shrink-0" />
+            <div>
+              <p className="font-bold text-sm">
+                {pedidosNovos.length === 1
+                  ? '1 pedido novo do garçom!'
+                  : `${pedidosNovos.length} pedidos novos do garçom!`}
+              </p>
+              <p className="text-xs text-orange-100">
+                {pedidosNovos.map(p => p.mesa_nome || `Mesa ${p.mesa_numero || '?'}`).join(' · ')}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <a
+              href="/mesas"
+              className="bg-white text-orange-600 text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-orange-50 transition-colors"
+            >
+              Ver mesas
+            </a>
+            <button
+              onClick={limparPedidos}
+              className="p-1.5 hover:bg-orange-600 rounded-lg transition-colors"
+              title="Dispensar alertas"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Métricas */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <CardMetrica
-          titulo="Receita Hoje"
+          titulo={periodo === 'hoje' ? 'Receita Hoje' : periodo === '7dias' ? 'Receita 7 Dias' : 'Receita 30 Dias'}
           valor={formatarMoeda(metricas?.receitaHoje)}
           icone={DollarSign}
           cor="text-green-600"
-          subtitulo={`${metricas?.pedidosHoje || 0} pedidos concluídos`}
+          subtitulo={`${metricas?.pedidosHoje || 0} pedidos`}
         />
-        <CardMetrica
-          titulo="Pedidos em Aberto"
-          valor={metricas?.pedidosAbertos || 0}
-          icone={ShoppingBag}
-          cor="text-orange-600"
-          subtitulo="Aguardando preparo ou entrega"
-        />
+        <div className="relative">
+          <CardMetrica
+            titulo="Pedidos em Aberto"
+            valor={metricas?.pedidosAbertos || 0}
+            icone={ShoppingBag}
+            cor="text-orange-600"
+            subtitulo="Aguardando preparo ou entrega"
+          />
+          {pedidosNovos.length > 0 && (
+            <span className="absolute -top-2 -right-2 bg-orange-500 text-white text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center shadow">
+              {pedidosNovos.length}
+            </span>
+          )}
+        </div>
         <CardMetrica
           titulo="Ticket Médio"
           valor={formatarMoeda(metricas?.ticketMedio)}
@@ -206,13 +276,13 @@ function CaixaStatus() {
             )}
           </div>
         </div>
-        <a
-          href="/caixa"
+        <Link
+          to="/caixa"
           className="text-sm font-medium text-orange-600 hover:underline flex items-center gap-1"
         >
           {sessao ? 'Ver caixa' : 'Abrir caixa'}
           <ChevronRight size={16} />
-        </a>
+        </Link>
       </div>
     </div>
   )
