@@ -1,7 +1,7 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron')
 const path = require('path')
 const fs = require('fs')
-const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged
+const isDev = !app.isPackaged
 const updater = require('./updater')
 const supabaseSync = require('./supabaseSync')
 
@@ -9,6 +9,8 @@ let mainWindow
 let estaEmDemo = false
 
 function createWindow() {
+  Menu.setApplicationMenu(null)
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -27,10 +29,37 @@ function createWindow() {
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools()
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
+    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   }
+
+  mainWindow.webContents.on('console-message', (event, level, message) => {
+    console.log(`[RENDERER LOG] ${message}`)
+  })
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('[RENDERER] did-finish-load disparou')
+    mainWindow.webContents.executeJavaScript(`
+      setTimeout(() => {
+        const root = document.getElementById('root');
+        console.log('[ROOT HTML]', root ? root.innerHTML.substring(0, 500) : 'NO ROOT');
+        const styles = document.styleSheets;
+        console.log('[STYLES COUNT]', styles.length);
+        const bg = window.getComputedStyle(document.body).backgroundColor;
+        console.log('[BODY BG]', bg);
+      }, 3000);
+    `).catch(err => console.error('[executeJavaScript error]', err.message))
+  })
+
+  mainWindow.webContents.on('did-fail-load', (e, code, desc, url) => {
+    console.error('[RENDERER] did-fail-load:', code, desc, url)
+  })
+
+  mainWindow.webContents.on('dom-ready', () => {
+    console.log('[RENDERER] dom-ready disparou')
+  })
+
+  mainWindow.webContents.openDevTools() // diagnóstico — remover após fix
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
@@ -92,7 +121,7 @@ app.whenReady().then(() => {
   ipcMain.handle('pedidos:criar', (_, dados) => db.pedidos.criar(dados))
   ipcMain.handle('pedidos:atualizar', (_, dados) => db.pedidos.atualizar(dados))
   ipcMain.handle('pedidos:getById', (_, id) => db.pedidos.getById(id))
-  ipcMain.handle('pedidos:dashboard', () => db.pedidos.dashboard())
+  ipcMain.handle('pedidos:dashboard', (_, periodo) => db.pedidos.dashboard(periodo))
 
   // Estoque
   ipcMain.handle('estoque:listar', () => db.estoque.listar())
@@ -104,6 +133,8 @@ app.whenReady().then(() => {
   ipcMain.handle('caixa:sessaoAtual', () => db.caixa.sessaoAtual())
   ipcMain.handle('caixa:abrir', (_, dados) => db.caixa.abrir(dados))
   ipcMain.handle('caixa:fechar', (_, dados) => db.caixa.fechar(dados))
+  ipcMain.handle('caixa:registrarVenda', (_, dados) => db.caixa.registrarVenda(dados))
+  ipcMain.handle('caixa:registrarVendaDelivery', (_, dados) => db.caixa.registrarVendaDelivery(dados))
   ipcMain.handle('caixa:sangria', (_, dados) => db.caixa.sangria(dados))
   ipcMain.handle('caixa:suprimento', (_, dados) => db.caixa.suprimento(dados))
   ipcMain.handle('caixa:movimentacoes', (_, sessaoId) => db.caixa.movimentacoes(sessaoId))
@@ -209,6 +240,25 @@ app.whenReady().then(() => {
       return { sucesso: true, codigoLoja: resultado.codigoLoja }
     } catch (err) {
       console.error('[SYNC] erro geral:', err)
+      return { sucesso: false, erro: err.message }
+    }
+  })
+
+  ipcMain.handle('supabase:sincronizarMesas', async () => {
+    try {
+      const cfg = db.config.get()
+      if (!cfg?.supabase_loja_id) return { sucesso: false, erro: 'Loja não sincronizada com o Supabase ainda' }
+      const todasMesas = db.mesas.listar()
+      const semSync = todasMesas.filter(m => !m.supabase_id)
+      if (semSync.length === 0) return { sucesso: true, sincronizadas: 0 }
+      const mapeamento = await supabaseSync.sincronizarTodasMesas(cfg.supabase_loja_id, semSync)
+      const rawDb = db.getRawDb()
+      for (const { localId, supabaseId } of mapeamento) {
+        rawDb.prepare('UPDATE mesas SET supabase_id = ? WHERE id = ?').run(supabaseId, localId)
+      }
+      return { sucesso: true, sincronizadas: mapeamento.length }
+    } catch (err) {
+      console.error('[SYNC MESAS] erro:', err)
       return { sucesso: false, erro: err.message }
     }
   })

@@ -58,7 +58,7 @@ contextBridge.exposeInMainWorld('api', {
     criar: (dados) => invoke('pedidos:criar', dados),
     atualizar: (dados) => invoke('pedidos:atualizar', dados),
     getById: (id) => invoke('pedidos:getById', id),
-    dashboard: () => invoke('pedidos:dashboard'),
+    dashboard: (periodo) => invoke('pedidos:dashboard', periodo),
   },
 
   // Estoque
@@ -74,6 +74,8 @@ contextBridge.exposeInMainWorld('api', {
     sessaoAtual: () => invoke('caixa:sessaoAtual'),
     abrir: (dados) => invoke('caixa:abrir', dados),
     fechar: (dados) => invoke('caixa:fechar', dados),
+    registrarVenda: (dados) => invoke('caixa:registrarVenda', dados),
+    registrarVendaDelivery: (dados) => invoke('caixa:registrarVendaDelivery', dados),
     sangria: (dados) => invoke('caixa:sangria', dados),
     suprimento: (dados) => invoke('caixa:suprimento', dados),
     movimentacoes: (sessaoId) => invoke('caixa:movimentacoes', sessaoId),
@@ -167,6 +169,7 @@ contextBridge.exposeInMainWorld('api', {
   supabase: {
     statusConexao: () => invoke('supabase:statusConexao'),
     sincronizarLoja: () => invoke('supabase:sincronizarLoja'),
+    sincronizarMesas: () => invoke('supabase:sincronizarMesas'),
   },
 
   garcons: {
