@@ -1,30 +1,47 @@
-const Database = require('better-sqlite3')
 const path = require('path')
-const { app } = require('electron')
+const { app, dialog } = require('electron')
 const crypto = require('crypto')
 const os = require('os')
-const { createClient } = require('@supabase/supabase-js')
-const ws = require('ws')
-const supabaseSync = require('../supabaseSync')
 
-const SUPABASE_URL = 'https://tcgsvatpkobjhmnvyhxl.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRjZ3N2YXRwa29iamhtbnZ5aHhsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNjQ2MjAsImV4cCI6MjA5MDc0MDYyMH0.0z6G8I9JwLLml2CCjkgL7yM_6nLvVKdqSzqtVPzd1gE'
+let Database, supabase, supabaseSync, ws
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  global: {
-    fetch: fetch,
-  },
-  realtime: {
-    transport: ws,
-  },
-})
+try {
+  Database = require('better-sqlite3')
+} catch (err) {
+  dialog.showErrorBox('Erro: better-sqlite3', `Falha ao carregar o banco de dados:\n\n${err.message}\n\nStack:\n${err.stack}`)
+  process.exit(1)
+}
+
+try {
+  const { createClient } = require('@supabase/supabase-js')
+  ws = require('ws')
+  supabaseSync = require('../supabaseSync')
+
+  const SUPABASE_URL = 'https://tcgsvatpkobjhmnvyhxl.supabase.co'
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRjZ3N2YXRwa29iamhtbnZ5aHhsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUxNjQ2MjAsImV4cCI6MjA5MDc0MDYyMH0.0z6G8I9JwLLml2CCjkgL7yM_6nLvVKdqSzqtVPzd1gE'
+
+  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { fetch: fetch },
+    realtime: { transport: ws },
+  })
+} catch (err) {
+  console.error('Aviso: Supabase/supabaseSync falhou ao carregar:', err.message)
+  supabaseSync = { fecharComandaSupabase: async () => {}, criarLoja: async () => null, sincronizarTodasMesas: async () => [], listarGarcons: async () => [], adicionarGarcom: async () => {}, deletarGarcom: async () => {}, verificarConexao: async () => false }
+}
 
 const userDataPath = app ? app.getPath('userData') : '.'
 const dbPath = path.join(userDataPath, 'tapedido.db')
+console.log('[db] dbPath:', dbPath)
 
-const db = new Database(dbPath)
-db.pragma('journal_mode = WAL')
-db.pragma('foreign_keys = ON')
+let db
+try {
+  db = new Database(dbPath)
+  db.pragma('journal_mode = WAL')
+  db.pragma('foreign_keys = ON')
+} catch (err) {
+  dialog.showErrorBox('Erro: SQLite', `Falha ao abrir o banco de dados:\n${dbPath}\n\n${err.message}\n\nStack:\n${err.stack}`)
+  process.exit(1)
+}
 
 // ── Criação das tabelas ────────────────────────────────────────────────────
 db.exec(`
@@ -356,12 +373,8 @@ const dbModule = {
       const row = db.prepare("SELECT * FROM licenca WHERE modo_demo = 0 LIMIT 1").get()
       if (!row) return { ativa: false, demo: false }
 
-      // If revocation was detected, check whether 24-hour grace period has expired
-      if (row.revogada_em) {
-        const ms24h = 24 * 60 * 60 * 1000
-        const elapsed = Date.now() - new Date(row.revogada_em).getTime()
-        if (elapsed > ms24h) return { ativa: false, demo: false, cancelada: true }
-      }
+      // Bloqueio imediato — sem grace period
+      if (row.revogada_em) return { ativa: false, demo: false, cancelada: true }
 
       return { ativa: true, demo: false }
     },
@@ -370,13 +383,7 @@ const dbModule = {
       const row = db.prepare("SELECT * FROM licenca WHERE modo_demo = 0 LIMIT 1").get()
       if (!row) return
 
-      // Only check once per week
-      const msWeek = 7 * 24 * 60 * 60 * 1000
-      if (row.ultima_verificacao) {
-        const elapsed = Date.now() - new Date(row.ultima_verificacao).getTime()
-        if (elapsed < msWeek) return
-      }
-
+      // Verifica no Supabase a cada abertura do app
       try {
         const { data, error } = await supabase
           .from('licencas')
@@ -384,25 +391,23 @@ const dbModule = {
           .eq('chave', row.chave)
           .maybeSingle()
 
-        // No internet / Supabase unreachable — never block
+        // Sem internet / Supabase inacessível — não bloqueia
         if (error || !data) return
 
-        // Record verification time
         db.prepare('UPDATE licenca SET ultima_verificacao = ? WHERE id = ?').run(agora(), row.id)
 
         if (data.status === 'revogada') {
-          // Record first detection time (do not overwrite if already set)
           if (!row.revogada_em) {
             db.prepare('UPDATE licenca SET revogada_em = ? WHERE id = ?').run(agora(), row.id)
           }
         } else {
-          // License reinstated — clear any revocation marker
+          // Licença reativada — limpa marcador de revogação
           if (row.revogada_em) {
             db.prepare('UPDATE licenca SET revogada_em = NULL WHERE id = ?').run(row.id)
           }
         }
       } catch {
-        // Network error — silently ignore, never block
+        // Erro de rede — ignora, nunca bloqueia sem confirmação
       }
     },
 
@@ -697,6 +702,15 @@ const dbModule = {
       if (!comanda) return { erro: 'Comanda não encontrada' }
       db.prepare("UPDATE comandas SET status = 'fechada', fechado_em = ? WHERE id = ?").run(agora(), id)
       db.prepare("UPDATE mesas SET status = 'livre' WHERE id = ?").run(comanda.mesa_id)
+      const mesa = db.prepare('SELECT supabase_id FROM mesas WHERE id = ?').get(comanda.mesa_id)
+      console.log('[db] comandas.fechar: mesa_id=%s supabase_id=%s', comanda.mesa_id, mesa?.supabase_id)
+      if (mesa?.supabase_id) {
+        supabaseSync.fecharComandaSupabase(mesa.supabase_id)
+          .then(() => console.log('[db] fecharComandaSupabase concluído'))
+          .catch(e => console.error('[db] fecharComandaSupabase falhou:', e.message))
+      } else {
+        console.warn('[db] mesa sem supabase_id — sync com Supabase ignorado')
+      }
       return { sucesso: true }
     },
     getByMesa(mesaId) {
@@ -811,24 +825,42 @@ const dbModule = {
       if (!pedido) return null
       return { ...pedido, itens: db.prepare('SELECT * FROM itens_pedido WHERE pedido_id = ?').all(id) }
     },
-    dashboard() {
+    dashboard(periodo = 'hoje') {
       const hoje = new Date().toISOString().split('T')[0]
-      const receitaHoje = db.prepare(`
+      let dataInicio = hoje
+      if (periodo === '7dias') {
+        const d = new Date(); d.setDate(d.getDate() - 6)
+        dataInicio = d.toISOString().split('T')[0]
+      } else if (periodo === '30dias') {
+        const d = new Date(); d.setDate(d.getDate() - 29)
+        dataInicio = d.toISOString().split('T')[0]
+      }
+
+      // Delivery: receita dos pedidos não cancelados
+      const receitaPedidos = db.prepare(`
         SELECT COALESCE(SUM(total), 0) as total FROM pedidos
-        WHERE date(criado_em) = ? AND status != 'cancelado'
-      `).get(hoje)
+        WHERE date(criado_em) BETWEEN ? AND ? AND status != 'cancelado'
+      `).get(dataInicio, hoje).total
+
+      // Mesa: receita registrada no caixa (tipo='venda')
+      const receitaCaixa = db.prepare(`
+        SELECT COALESCE(SUM(valor), 0) as total FROM caixa_movimentacoes
+        WHERE date(criado_em) BETWEEN ? AND ? AND tipo = 'venda'
+      `).get(dataInicio, hoje).total
+
       const pedidosAbertos = db.prepare(`
-        SELECT COUNT(*) as count FROM pedidos WHERE status IN ('recebido', 'em_preparo', 'pronto')
+        SELECT COUNT(*) as count FROM pedidos WHERE status IN ('recebido', 'em_preparo', 'pronto', 'saiu')
       `).get()
       const pedidosHoje = db.prepare(`
-        SELECT COUNT(*) as count FROM pedidos WHERE date(criado_em) = ? AND status != 'cancelado'
-      `).get(hoje)
+        SELECT COUNT(*) as count FROM pedidos WHERE date(criado_em) BETWEEN ? AND ? AND status != 'cancelado'
+      `).get(dataInicio, hoje)
       const ticketMedio = db.prepare(`
         SELECT COALESCE(AVG(total), 0) as avg FROM pedidos
-        WHERE date(criado_em) = ? AND status != 'cancelado'
-      `).get(hoje)
+        WHERE date(criado_em) BETWEEN ? AND ? AND status != 'cancelado'
+      `).get(dataInicio, hoje)
+
       return {
-        receitaHoje: receitaHoje.total,
+        receitaHoje: receitaPedidos + receitaCaixa,
         pedidosAbertos: pedidosAbertos.count,
         pedidosHoje: pedidosHoje.count,
         ticketMedio: ticketMedio.avg,
@@ -916,6 +948,34 @@ const dbModule = {
       db.prepare('UPDATE caixa_sessoes SET total_suprimento = total_suprimento + ? WHERE id = ?').run(dados.valor, sessao.id)
       return { sucesso: true }
     },
+    registrarVendaDelivery(dados) {
+      const sessao = db.prepare("SELECT * FROM caixa_sessoes WHERE status = 'aberto' LIMIT 1").get()
+      if (!sessao) return { erro: 'Nenhum caixa aberto' }
+      const colMap = { dinheiro: 'total_dinheiro', pix: 'total_pix', debito: 'total_debito', credito: 'total_credito' }
+      const col = colMap[dados.formaPagamento]
+      db.prepare(`
+        INSERT INTO caixa_movimentacoes (sessao_id, tipo, forma_pagamento, valor, descricao, criado_em)
+        VALUES (?, 'venda_delivery', ?, ?, ?, ?)
+      `).run(sessao.id, dados.formaPagamento, dados.valor, dados.descricao || '', agora())
+      if (col) {
+        db.prepare(`UPDATE caixa_sessoes SET ${col} = ${col} + ? WHERE id = ?`).run(dados.valor, sessao.id)
+      }
+      return { sucesso: true }
+    },
+    registrarVenda(dados) {
+      const sessao = db.prepare("SELECT * FROM caixa_sessoes WHERE status = 'aberto' LIMIT 1").get()
+      if (!sessao) return { erro: 'Nenhum caixa aberto' }
+      const colMap = { dinheiro: 'total_dinheiro', pix: 'total_pix', debito: 'total_debito', credito: 'total_credito' }
+      const col = colMap[dados.formaPagamento]
+      db.prepare(`
+        INSERT INTO caixa_movimentacoes (sessao_id, tipo, forma_pagamento, valor, descricao, criado_em)
+        VALUES (?, 'venda', ?, ?, ?, ?)
+      `).run(sessao.id, dados.formaPagamento, dados.valor, dados.descricao || '', agora())
+      if (col) {
+        db.prepare(`UPDATE caixa_sessoes SET ${col} = ${col} + ? WHERE id = ?`).run(dados.valor, sessao.id)
+      }
+      return { sucesso: true }
+    },
     movimentacoes(sessaoId) {
       return db.prepare('SELECT * FROM caixa_movimentacoes WHERE sessao_id = ? ORDER BY criado_em DESC').all(sessaoId)
     },
@@ -963,15 +1023,21 @@ const dbModule = {
     },
     fluxoCaixa(periodo) {
       const { inicio, fim } = periodo
-      const entradas = db.prepare(`
+      const entradasContas = db.prepare(`
         SELECT COALESCE(SUM(valor), 0) as total FROM contas_receber
         WHERE status = 'recebido' AND recebido_em BETWEEN ? AND ?
-      `).get(inicio, fim)
+      `).get(inicio, fim).total
+      // Inclui vendas de mesa (venda) e delivery (venda_delivery) registradas no caixa
+      const entradasCaixa = db.prepare(`
+        SELECT COALESCE(SUM(valor), 0) as total FROM caixa_movimentacoes
+        WHERE tipo IN ('venda', 'venda_delivery') AND criado_em BETWEEN ? AND ?
+      `).get(inicio, fim).total
       const saidas = db.prepare(`
         SELECT COALESCE(SUM(valor), 0) as total FROM contas_pagar
         WHERE status = 'pago' AND pago_em BETWEEN ? AND ?
-      `).get(inicio, fim)
-      return { entradas: entradas.total, saidas: saidas.total, saldo: entradas.total - saidas.total }
+      `).get(inicio, fim).total
+      const entradas = entradasContas + entradasCaixa
+      return { entradas, saidas, saldo: entradas - saidas }
     },
   },
 
@@ -1040,16 +1106,33 @@ const dbModule = {
       const groupBy = agrupamento === 'mes' ? "strftime('%Y-%m', criado_em)"
         : agrupamento === 'semana' ? "strftime('%Y-%W', criado_em)"
         : "date(criado_em)"
+      // Une vendas de delivery (pedidos entregue/concluido) com vendas de mesa (caixa_movimentacoes tipo='venda')
+      // venda_delivery é excluída pois o pedido já está contado via tabela pedidos
       return db.prepare(`
-        SELECT ${groupBy} as periodo,
-          COUNT(*) as total_pedidos,
-          COALESCE(SUM(total), 0) as receita,
-          COALESCE(AVG(total), 0) as ticket_medio
-        FROM pedidos
-        WHERE criado_em BETWEEN ? AND ? AND status != 'cancelado'
-        GROUP BY ${groupBy}
+        SELECT periodo,
+          SUM(total_pedidos) as total_pedidos,
+          SUM(receita) as receita,
+          CASE WHEN SUM(total_pedidos) > 0 THEN CAST(SUM(receita) AS REAL) / SUM(total_pedidos) ELSE 0 END as ticket_medio
+        FROM (
+          SELECT ${groupBy} as periodo,
+            COUNT(*) as total_pedidos,
+            COALESCE(SUM(total), 0) as receita
+          FROM pedidos
+          WHERE criado_em BETWEEN ? AND ?
+            AND status IN ('entregue', 'concluido', 'pronto', 'saiu', 'em_preparo', 'recebido')
+            AND status != 'cancelado'
+          GROUP BY ${groupBy}
+          UNION ALL
+          SELECT ${groupBy} as periodo,
+            COUNT(*) as total_pedidos,
+            COALESCE(SUM(valor), 0) as receita
+          FROM caixa_movimentacoes
+          WHERE criado_em BETWEEN ? AND ? AND tipo = 'venda'
+          GROUP BY ${groupBy}
+        ) t
+        GROUP BY periodo
         ORDER BY periodo
-      `).all(inicio, fim)
+      `).all(inicio, fim, inicio, fim)
     },
     produtosMaisVendidos(periodo) {
       return db.prepare(`

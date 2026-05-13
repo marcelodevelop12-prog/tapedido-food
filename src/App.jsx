@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 
 import Layout from './components/Layout'
@@ -38,14 +38,15 @@ function App() {
     }
 
     try {
+      // Verifica no Supabase a cada abertura — atualiza DB local antes de decidir
+      await window.api.licenca.verificarPeriodico().catch(() => {})
+
       const resultado = await window.api.licenca.verificar()
       if (resultado.cancelada) {
         setCancelada(true)
       } else if (resultado.ativa) {
         setAtivado(true)
         setModoDemo(resultado.demo)
-        // Weekly Supabase check — fire-and-forget, never blocks startup
-        window.api.licenca.verificarPeriodico().catch(() => {})
       }
     } catch (err) {
       console.error('Erro ao verificar licença:', err)
@@ -92,7 +93,7 @@ function App() {
   }
 
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Toaster position="top-right" toastOptions={{ duration: 3000 }} />
       <Routes>
         <Route path="/" element={<Layout modoDemo={modoDemo} />}>
@@ -108,7 +109,7 @@ function App() {
           <Route path="configuracoes" element={<Configuracoes />} />
         </Route>
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   )
 }
 
