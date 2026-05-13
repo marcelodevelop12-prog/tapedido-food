@@ -143,14 +143,14 @@ export default function Ativacao({ onAtivado }) {
             onClick={() => {
               const isElectronCtx = typeof window !== 'undefined' && window.api
               if (isElectronCtx) {
-                window.api.shell.openExternal('https://www.mercadolivre.com.br')
+                window.api.shell.openExternal('https://www.mercadolivre.com.br/sistema-pdv-restaurante-lanchonete-delivery--app-garcom/up/MLBU3958667031')
               } else {
-                window.open('https://www.mercadolivre.com.br', '_blank')
+                window.open('https://www.mercadolivre.com.br/sistema-pdv-restaurante-lanchonete-delivery--app-garcom/up/MLBU3958667031', '_blank')
               }
             }}
             className="w-full mt-3 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-semibold py-3 rounded-lg transition-colors flex items-center justify-center gap-2"
           >
-            🛒 Comprar Licença — R$ 69,90
+            🛒 Comprar Licença — R$ 78,90
           </button>
 
           <div className="mt-5 p-4 bg-blue-50 rounded-lg">

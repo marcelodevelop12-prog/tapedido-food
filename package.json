@@ -1,6 +1,6 @@
 {
   "name": "tapedido-food",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Sistema PDV para pequenos negócios alimentícios",
   "main": "electron/main.js",
   "homepage": "./",
@@ -47,6 +47,47 @@
     "ws": "^8.20.0",
     "zustand": "^4.5.1"
   },
+  "build": {
+    "appId": "com.tapedido.food",
+    "productName": "TáPedido Food",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "assets/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/*.node",
+      "**/better-sqlite3/**/*",
+      "**/serialport/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icons/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "TáPedido Food"
+    },
+    "extraResources": [
+      { "from": "assets/", "to": "assets/" }
+    ],
+    "linux": {
+      "icon": "assets/icons"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "marcelodevelop12-prog",
+      "repo": "tapedido-food",
+      "releaseType": "release"
+    }
+  },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.8",
     "@types/react": "^18.2.55",
@@ -61,37 +102,5 @@
     "tailwindcss": "^3.4.1",
     "vite": "^5.1.1",
     "wait-on": "^7.2.0"
-  },
-  "build": {
-    "appId": "com.tapedido.food",
-    "productName": "TáPedido Food",
-    "directories": {
-      "output": "dist-electron"
-    },
-    "files": [
-      "dist/**/*",
-      "electron/**/*",
-      "assets/**/*",
-      "node_modules/**/*"
-    ],
-    "win": {
-      "target": "nsis",
-      "icon": "assets/icons/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "shortcutName": "TáPedido Food"
-    },
-    "extraResources": [
-      {
-        "from": "assets/",
-        "to": "assets/"
-      }
-    ],
-    "linux": {
-      "icon": "assets/icons"
-    }
   }
 }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { TrendingUp, ShoppingBag, AlertTriangle, DollarSign, Clock, Package, ChevronRight, Bell, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { formatarMoeda, formatarHora, statusPedidoLabel, statusPedidoCor } from '../../lib/utils'
@@ -110,12 +110,12 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <a
-              href="/mesas"
+            <Link
+              to="/mesas"
               className="bg-white text-orange-600 text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-orange-50 transition-colors"
             >
               Ver mesas
-            </a>
+            </Link>
             <button
               onClick={limparPedidos}
               className="p-1.5 hover:bg-orange-600 rounded-lg transition-colors"
@@ -174,9 +174,9 @@ export default function Dashboard() {
               <Clock size={18} className="text-orange-500" />
               Pedidos Ativos
             </h3>
-            <a href="/delivery" className="text-xs text-orange-500 hover:underline flex items-center gap-1">
+            <Link to="/delivery" className="text-xs text-orange-500 hover:underline flex items-center gap-1">
               Ver todos <ChevronRight size={14} />
-            </a>
+            </Link>
           </div>
           <div className="divide-y divide-gray-50">
             {pedidosAbertos.length === 0 ? (
@@ -216,9 +216,9 @@ export default function Dashboard() {
               <Package size={18} className="text-red-500" />
               Alertas de Estoque
             </h3>
-            <a href="/estoque" className="text-xs text-orange-500 hover:underline flex items-center gap-1">
+            <Link to="/estoque" className="text-xs text-orange-500 hover:underline flex items-center gap-1">
               Ir para estoque <ChevronRight size={14} />
-            </a>
+            </Link>
           </div>
           <div className="divide-y divide-gray-50">
             {alertasEstoque.length === 0 ? (
@@ -250,6 +250,7 @@ export default function Dashboard() {
 }
 
 function CaixaStatus() {
+  const navigate = useNavigate()
   const [sessao, setSessao] = useState(null)
 
   useEffect(() => {
@@ -276,13 +277,13 @@ function CaixaStatus() {
             )}
           </div>
         </div>
-        <Link
-          to="/caixa"
+        <button
+          onClick={() => navigate('/caixa')}
           className="text-sm font-medium text-orange-600 hover:underline flex items-center gap-1"
         >
-          {sessao ? 'Ver caixa' : 'Abrir caixa'}
+          {sessao ? 'Ver caixa' : 'Abrir Caixa'}
           <ChevronRight size={16} />
-        </Link>
+        </button>
       </div>
     </div>
   )

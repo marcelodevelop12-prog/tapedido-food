@@ -589,15 +589,15 @@ export default function Configuracoes() {
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-5">
               <h4 className="font-semibold text-amber-800 mb-2">🎮 Modo Demonstração Ativo</h4>
               <p className="text-sm text-amber-700 mb-4">
-                Você está usando dados fictícios. Para uso real, adquira uma licença no Mercado Livre por <strong>R$ 69,90</strong> (pagamento único, sem mensalidade).
+                Você está usando dados fictícios. Para uso real, adquira uma licença no Mercado Livre por <strong>R$ 78,90</strong> (pagamento único, sem mensalidade).
               </p>
               <div className="flex flex-wrap gap-3">
                 <button
-                  onClick={() => abrirUrl('https://www.mercadolivre.com.br')}
+                  onClick={() => abrirUrl('https://www.mercadolivre.com.br/sistema-pdv-restaurante-lanchonete-delivery--app-garcom/up/MLBU3958667031')}
                   className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-semibold px-4 py-2 rounded-lg text-sm transition-colors"
                 >
                   <ShoppingCart size={15} />
-                  Comprar Licença — R$ 69,90
+                  Comprar Licença — R$ 78,90
                 </button>
                 <button
                   onClick={resetarDemoData}
@@ -613,11 +613,11 @@ export default function Configuracoes() {
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 space-y-3">
             <div className="flex flex-wrap gap-3">
               <button
-                onClick={() => abrirUrl('https://www.mercadolivre.com.br')}
+                onClick={() => abrirUrl('https://www.mercadolivre.com.br/sistema-pdv-restaurante-lanchonete-delivery--app-garcom/up/MLBU3958667031')}
                 className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors"
               >
                 <ShoppingCart size={15} />
-                Comprar Licença — R$ 69,90
+                Comprar Licença — R$ 78,90
               </button>
               <button
                 onClick={() => abrirUrl('https://wa.me/5521992791713')}
@@ -627,6 +627,13 @@ export default function Configuracoes() {
                 Falar com Suporte
               </button>
             </div>
+            <button
+              onClick={() => abrirUrl('https://wa.me/5521992791713')}
+              className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors"
+            >
+              <MessageCircle size={15} />
+              Adquira sua 2ª licença com 40% de desconto
+            </button>
           </div>
 
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 text-sm text-gray-500">
@@ -959,11 +966,11 @@ export default function Configuracoes() {
                 Suporte via WhatsApp
               </button>
               <button
-                onClick={() => abrirUrl('https://www.mercadolivre.com.br')}
+                onClick={() => abrirUrl('https://www.mercadolivre.com.br/sistema-pdv-restaurante-lanchonete-delivery--app-garcom/up/MLBU3958667031')}
                 className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors"
               >
                 <ShoppingCart size={15} />
-                Comprar Licença — R$ 69,90
+                Comprar Licença — R$ 78,90
               </button>
             </div>
           </div>

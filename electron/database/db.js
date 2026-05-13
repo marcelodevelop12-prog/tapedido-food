@@ -658,7 +658,9 @@ const dbModule = {
         const supabaseId = crypto.randomUUID()
         db.prepare('UPDATE mesas SET supabase_id = ? WHERE id = ?').run(supabaseId, mesa.id)
         mesa.supabase_id = supabaseId
-        supabaseSync.sincronizarMesaCriada(lojaId, mesa).catch(() => {})
+        supabaseSync.sincronizarMesaCriada(lojaId, mesa).catch(err => {
+          console.error('[db] mesas.criar: falha ao sincronizar com Supabase:', err?.message || err)
+        })
       }
       return mesa
     },

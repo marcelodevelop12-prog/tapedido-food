@@ -308,13 +308,21 @@ async function deletarGarcom(id) {
 async function sincronizarMesaCriada(lojaId, mesa) {
   if (!lojaId) return
   try {
-    await sb().from('mesas').insert({
+    const { error } = await sb().from('mesas').insert({
       id: mesa.supabase_id,
       loja_id: lojaId,
       numero: mesa.numero,
+      nome: mesa.nome || `Mesa ${mesa.numero}`,
       status: mesa.status || 'livre',
     })
-  } catch {}
+    if (error) {
+      console.error('[supabaseSync] sincronizarMesaCriada ERRO:', error.message, error.code, error.details)
+    } else {
+      console.log('[supabaseSync] sincronizarMesaCriada OK: mesa', mesa.numero, '→ supabase_id', mesa.supabase_id)
+    }
+  } catch (err) {
+    console.error('[supabaseSync] sincronizarMesaCriada exceção:', err?.message || err)
+  }
 }
 
 async function sincronizarMesaAtualizada(lojaId, mesa) {
@@ -332,6 +340,48 @@ async function sincronizarMesaDeletada(supabaseId) {
   try {
     await sb().from('mesas').delete().eq('id', supabaseId)
   } catch {}
+}
+
+async function fecharComandaSupabase(mesaSupabaseId) {
+  if (!mesaSupabaseId) {
+    console.error('[supabaseSync] fecharComandaSupabase: mesaSupabaseId é null/undefined — abortando')
+    return
+  }
+
+  console.log('[supabaseSync] fecharComandaSupabase: iniciando para mesa.supabase_id =', mesaSupabaseId)
+
+  // Fecha a comanda ativa no Supabase — erros aqui não bloqueiam o UPDATE da mesa
+  try {
+    const { data: dataComanda, error: errComanda } = await sb()
+      .from('comandas')
+      .update({ status: 'fechada', fechado_em: new Date().toISOString() })
+      .eq('mesa_id', mesaSupabaseId)
+      .eq('status', 'aberta')
+      .select('id')
+    if (errComanda) {
+      console.error('[supabaseSync] UPDATE comandas → ERRO:', errComanda.message, errComanda.details)
+    } else {
+      console.log('[supabaseSync] UPDATE comandas → OK, linhas afetadas:', dataComanda?.length ?? 0)
+    }
+  } catch (e) {
+    console.error('[supabaseSync] UPDATE comandas → exceção:', e.message)
+  }
+
+  // Libera a mesa no Supabase
+  try {
+    const { data: dataMesa, error: errMesa } = await sb()
+      .from('mesas')
+      .update({ status: 'livre' })
+      .eq('id', mesaSupabaseId)
+      .select('id, status')
+    if (errMesa) {
+      console.error('[supabaseSync] UPDATE mesas → ERRO:', errMesa.message, errMesa.details)
+    } else {
+      console.log('[supabaseSync] UPDATE mesas → OK:', dataMesa)
+    }
+  } catch (e) {
+    console.error('[supabaseSync] UPDATE mesas → exceção:', e.message)
+  }
 }
 
 async function sincronizarTodasMesas(lojaId, mesas) {
@@ -373,4 +423,5 @@ module.exports = {
   sincronizarMesaAtualizada,
   sincronizarMesaDeletada,
   sincronizarTodasMesas,
+  fecharComandaSupabase,
 }
