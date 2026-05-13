@@ -73,7 +73,8 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "shortcutName": "TáPedido Food"
+      "shortcutName": "TáPedido Food",
+      "artifactName": "tapedido-food-setup-${version}.${ext}"
     },
     "extraResources": [
       { "from": "assets/", "to": "assets/" }

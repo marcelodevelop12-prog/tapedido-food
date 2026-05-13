@@ -12,11 +12,17 @@ module.exports = {
     'electron/**/*',
     'assets/**/*',
     'node_modules/**/*',
+    'package.json',
+  ],
+  asarUnpack: [
+    '**/better-sqlite3/**/*',
+    '**/serialport/**/*',
   ],
   win: {
     target: 'nsis',
     icon: 'assets/icons/icon.ico',
   },
+  artifactName: 'tapedido-food-setup-${version}.${ext}',
   nsis: {
     oneClick: false,
     allowToChangeInstallationDirectory: true,
