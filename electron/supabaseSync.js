@@ -1,4 +1,4 @@
-const { createClient } = require('@supabase/supabase-js')
+﻿const { createClient } = require('@supabase/supabase-js')
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
@@ -26,7 +26,7 @@ function sb() {
 
 const agora = () => new Date().toISOString()
 
-// ── Helpers ────────────────────────────────────────────────────────────────
+// â"€â"€ Helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 function gerarCodigoLoja() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -70,7 +70,7 @@ async function uploadImagem(lojaId, supabaseId, imagemUrl) {
   try {
     await garantirBucket()
 
-    // Converte file:///C:/... → C:\...  no Windows
+    // Converte file:///C:/... -> C:\...  no Windows
     let filePath = imagemUrl.replace('file:///', '')
     if (process.platform === 'win32') {
       filePath = filePath.replace(/\//g, '\\')
@@ -107,7 +107,7 @@ async function deletarImagemStorage(storagePath) {
   } catch {}
 }
 
-// ── Tarefa 1 — Criação de loja ─────────────────────────────────────────────
+// â"€â"€ Tarefa 1 â€" Criacao de loja â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 async function criarLoja(db, nomeLoja) {
   try {
@@ -119,6 +119,8 @@ async function criarLoja(db, nomeLoja) {
       nome: nomeLoja || 'Minha Loja',
       cor_primaria: '#F97316',
       plano: 'compartilhado',
+      codigo_loja: codigoLoja,
+      ativo: true,
     })
 
     if (errLoja) {
@@ -134,27 +136,27 @@ async function criarLoja(db, nomeLoja) {
     })
     if (errCfg) {
       console.error('[supabaseSync] erro ao criar configuracoes:', errCfg.message, errCfg.code)
-      // Tenta UPDATE caso a linha já exista
+      // Tenta UPDATE caso a linha jÃ¡ exista
       await sb().from('configuracoes').update({ codigo_loja: codigoLoja }).eq('loja_id', lojaId)
     }
 
     salvarLog(db, 'criar_loja', 'sucesso')
     return { lojaId, codigoLoja }
   } catch (err) {
-    console.error('[supabaseSync] exceção em criarLoja:', err)
+    console.error('[supabaseSync] excecao em criarLoja:', err)
     salvarLog(db, 'criar_loja', 'erro', err.message)
     return null
   }
 }
 
-// ── Tarefa 2 — Sincronização de produtos ──────────────────────────────────
+// â"€â"€ Tarefa 2 â€" Sincronizacao de produtos â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 async function sincronizarProdutoCriado(db, produto, lojaId) {
   if (!lojaId) return
   try {
     const supabaseId = produto.supabase_id || crypto.randomUUID()
 
-    // Salva o supabase_id localmente se ainda não estava definido
+    // Salva o supabase_id localmente se ainda nao estava definido
     if (!produto.supabase_id) {
       db.prepare('UPDATE menu_items SET supabase_id = ? WHERE id = ?').run(supabaseId, produto.id)
     }
@@ -236,7 +238,7 @@ async function sincronizarProdutoAtualizado(db, produto, lojaId, imagemAnterior)
 async function sincronizarProdutoDeletado(db, produtoSnapshot, lojaId) {
   if (!lojaId || !produtoSnapshot?.supabase_id) return
   try {
-    // Deleta imagem do Storage se for URL pública do Supabase
+    // Deleta imagem do Storage se for URL publica do Supabase
     if (produtoSnapshot.imagem && !produtoSnapshot.imagem.startsWith('file:///')) {
       const storagePath = extrairStoragePath(produtoSnapshot.imagem)
       if (storagePath) await deletarImagemStorage(storagePath)
@@ -260,7 +262,7 @@ async function toggleDisponivelSupabase(db, supabaseId, disponivel) {
   }
 }
 
-// ── Status de conexão ──────────────────────────────────────────────────────
+// â"€â"€ Status de conexao â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 async function verificarConexao() {
   try {
@@ -274,7 +276,7 @@ async function verificarConexao() {
   }
 }
 
-// ── Garçons ────────────────────────────────────────────────────────────────
+// â"€â"€ Garcons â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 async function listarGarcons(lojaId) {
   try {
@@ -307,21 +309,40 @@ async function deletarGarcom(id) {
   return { sucesso: true }
 }
 
-// ── Mesas ──────────────────────────────────────────────────────────────────
+// â"€â"€ Mesas â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
 
 async function sincronizarMesaCriada(lojaId, mesa) {
-  if (!lojaId) return
+  if (!lojaId) return null
   const { error } = await sb().from('mesas').insert({
     id: mesa.supabase_id,
     loja_id: lojaId,
     numero: mesa.numero,
     status: mesa.status || 'livre',
   })
-  if (error) {
-    console.error('[supabaseSync] sincronizarMesaCriada ERRO:', error.message, error.code, error.details)
-  } else {
-    console.log('[supabaseSync] sincronizarMesaCriada OK: mesa', mesa.numero, '→', mesa.supabase_id)
+  if (!error) {
+    console.log('[supabaseSync] sincronizarMesaCriada OK: mesa', mesa.numero, mesa.supabase_id)
+    return mesa.supabase_id
   }
+
+  console.error('[supabaseSync] sincronizarMesaCriada ERRO:', error.message, error.code, error.details)
+
+  // Conflict: mesa with same numero already exists in Supabase (previous sync).
+  // Fetch existing id so SQLite uses the same UUID the garcom app already knows.
+  try {
+    const { data: existente } = await sb()
+      .from('mesas')
+      .select('id')
+      .eq('loja_id', lojaId)
+      .eq('numero', mesa.numero)
+      .maybeSingle()
+    if (existente?.id) {
+      console.log('[supabaseSync] sincronizarMesaCriada: reusing existing id', existente.id, 'for mesa', mesa.numero)
+      return existente.id
+    }
+  } catch (e) {
+    console.error('[supabaseSync] sincronizarMesaCriada fallback error:', e.message)
+  }
+  return null
 }
 
 async function sincronizarMesaAtualizada(lojaId, mesa) {
@@ -345,13 +366,13 @@ async function sincronizarMesaDeletada(supabaseId) {
 
 async function fecharComandaSupabase(mesaSupabaseId) {
   if (!mesaSupabaseId) {
-    console.error('[supabaseSync] fecharComandaSupabase: mesaSupabaseId é null/undefined — abortando')
+    console.error('[supabaseSync] fecharComandaSupabase: mesaSupabaseId e null/undefined â€" abortando')
     return
   }
 
   console.log('[supabaseSync] fecharComandaSupabase: iniciando para mesa.supabase_id =', mesaSupabaseId)
 
-  // Fecha a comanda ativa no Supabase — erros aqui não bloqueiam o UPDATE da mesa
+  // Fecha a comanda ativa no Supabase â€" erros aqui nao bloqueiam o UPDATE da mesa
   try {
     const { data: dataComanda, error: errComanda } = await sb()
       .from('comandas')
@@ -360,12 +381,12 @@ async function fecharComandaSupabase(mesaSupabaseId) {
       .eq('status', 'aberta')
       .select('id')
     if (errComanda) {
-      console.error('[supabaseSync] UPDATE comandas → ERRO:', errComanda.message, errComanda.details)
+      console.error('[supabaseSync] UPDATE comandas -> ERRO:', errComanda.message, errComanda.details)
     } else {
-      console.log('[supabaseSync] UPDATE comandas → OK, linhas afetadas:', dataComanda?.length ?? 0)
+      console.log('[supabaseSync] UPDATE comandas -> OK, linhas afetadas:', dataComanda?.length ?? 0)
     }
   } catch (e) {
-    console.error('[supabaseSync] UPDATE comandas → exceção:', e.message)
+    console.error('[supabaseSync] UPDATE comandas -> excecao:', e.message)
   }
 
   // Libera a mesa no Supabase
@@ -376,12 +397,12 @@ async function fecharComandaSupabase(mesaSupabaseId) {
       .eq('id', mesaSupabaseId)
       .select('id, status')
     if (errMesa) {
-      console.error('[supabaseSync] UPDATE mesas → ERRO:', errMesa.message, errMesa.details)
+      console.error('[supabaseSync] UPDATE mesas -> ERRO:', errMesa.message, errMesa.details)
     } else {
-      console.log('[supabaseSync] UPDATE mesas → OK:', dataMesa)
+      console.log('[supabaseSync] UPDATE mesas -> OK:', dataMesa)
     }
   } catch (e) {
-    console.error('[supabaseSync] UPDATE mesas → exceção:', e.message)
+    console.error('[supabaseSync] UPDATE mesas -> excecao:', e.message)
   }
 }
 
@@ -412,11 +433,92 @@ async function sincronizarTodasMesas(lojaId, mesas) {
     console.log('[supabaseSync] sincronizarTodasMesas OK:', mapeamento.length, 'mesas. data:', JSON.stringify(data))
     return mapeamento.map(({ localId, supabaseId }) => ({ localId, supabaseId }))
   } catch (err) {
-    console.error('[supabaseSync] sincronizarTodasMesas exceção:', err?.message || err)
+    console.error('[supabaseSync] sincronizarTodasMesas excecao:', err?.message || err)
     return []
   }
 }
 
+
+// Reconcile supabase_ids on startup.
+// Ensures SQLite mesas use the same UUID as Supabase (and the garcom app).
+// Called once when the app starts. rawDb = better-sqlite3 instance.
+async function reconciliarMesasStartup(rawDb, lojaId) {
+  if (!lojaId) return
+  try {
+    const { data: remotas, error } = await sb()
+      .from('mesas')
+      .select('id, numero')
+      .eq('loja_id', lojaId)
+
+    if (error || !remotas?.length) return
+
+    const locais = rawDb.prepare('SELECT id, numero, supabase_id FROM mesas').all()
+    let atualizadas = 0
+
+    for (const local of locais) {
+      const remota = remotas.find(r => r.id === local.supabase_id || r.numero === local.numero)
+      if (remota && remota.id !== local.supabase_id) {
+        rawDb.prepare('UPDATE mesas SET supabase_id = ? WHERE id = ?').run(remota.id, local.id)
+        console.log('[supabaseSync] reconciliar: mesa', local.numero, local.supabase_id, '->', remota.id)
+        atualizadas++
+      }
+    }
+
+    if (atualizadas > 0) {
+      console.log('[supabaseSync] reconciliar: fixed', atualizadas, 'mesa(s)')
+    }
+  } catch (e) {
+    console.error('[supabaseSync] reconciliarMesasStartup error:', e.message)
+  }
+}
+
+// ── Realtime ──────────────────────────────────────────────────────────────────
+
+function iniciarRealtime(lojaId, mainWindow, db) {
+  if (!lojaId) return
+
+  sb().channel('pdv-realtime')
+    .on('postgres_changes', {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'comanda_itens',
+    }, (payload) => {
+      console.log('[Realtime] comanda_itens INSERT:', payload.new)
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('realtime:novoItem', payload.new)
+      }
+    })
+    .on('postgres_changes', {
+      event: 'UPDATE',
+      schema: 'public',
+      table: 'comandas',
+      filter: `loja_id=eq.${lojaId}`,
+    }, (payload) => {
+      console.log('[Realtime] comandas UPDATE:', payload.new)
+      if (payload.new.status !== 'fechada') return
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('realtime:comandaFechada', payload.new)
+      }
+      // Registra venda no caixa automaticamente
+      try {
+        const formaPagamento = payload.new.forma_pagamento || 'dinheiro'
+        const total = payload.new.total || 0
+        if (total > 0) {
+          db.caixa.registrarVenda({
+            formaPagamento,
+            valor: total,
+            descricao: `Mesa fechada pelo garçom`,
+          })
+          console.log('[Realtime] venda registrada no caixa:', total, formaPagamento)
+        }
+      } catch (err) {
+        console.error('[Realtime] erro ao registrar venda:', err.message)
+      }
+    })
+    .subscribe((status) => {
+      console.log('[Realtime] status:', status)
+    })
+}
 module.exports = {
   criarLoja,
   sincronizarProdutoCriado,
@@ -433,5 +535,8 @@ module.exports = {
   sincronizarMesaAtualizada,
   sincronizarMesaDeletada,
   sincronizarTodasMesas,
+  reconciliarMesasStartup,
   fecharComandaSupabase,
+  iniciarRealtime,
 }
+
