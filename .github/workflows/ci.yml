@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      # better-sqlite3 e serialport compilam binario nativo; no CI so precisamos
+      # verificar lint e build do front, entao pulamos os scripts de instalacao.
+      - run: npm ci --ignore-scripts
+
+      # TODO: adicionar passo de lint quando existir eslint.config.js neste repo
+      # (hoje so o tapedido-food-garcom tem configuracao de ESLint).
+
+      - name: Build do front
+        run: npx vite build
+
+      - name: Sintaxe dos arquivos do Electron
+        run: |
+          for f in electron/*.js electron/database/*.js scripts/*.js; do
+            node --check "$f"
+          done
+
+      # Regressao: os arquivos ja vieram corrompidos uma vez (UTF-8 lido como
+      # cp1252), com 'Débito' virando 'DÃ©bito' nos botoes de pagamento.
+      - name: Encoding dos fontes
+        run: |
+          if grep -rlP '\xc3\x83\xc2[\x80-\xbf]' --include='*.js' --include='*.jsx' src/ electron/ scripts/; then
+            echo "Arquivos acima estao com encoding corrompido (mojibake)."
+            exit 1
+          fi
+          echo "Encoding ok."
