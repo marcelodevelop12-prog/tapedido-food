@@ -34,9 +34,13 @@ jobs:
 
       # Regressao: os arquivos ja vieram corrompidos uma vez (UTF-8 lido como
       # cp1252), com 'Débito' virando 'DÃ©bito' nos botoes de pagamento.
+      # package.json entra na checagem porque productName e shortcutName viram o
+      # nome do programa instalado e do atalho — ja foram ao ar corrompidos.
       - name: Encoding dos fontes
         run: |
-          if grep -rlP '\xc3\x83\xc2[\x80-\xbf]' --include='*.js' --include='*.jsx' src/ electron/ scripts/; then
+          if grep -rlP '\xc3\x83\xc2[\x80-\xbf]' \
+               --include='*.js' --include='*.jsx' --include='*.json' \
+               src/ electron/ scripts/ package.json; then
             echo "Arquivos acima estao com encoding corrompido (mojibake)."
             exit 1
           fi
