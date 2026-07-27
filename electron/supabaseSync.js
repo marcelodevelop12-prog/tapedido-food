@@ -37,6 +37,27 @@ function gerarCodigoLoja() {
   return codigo
 }
 
+// O codigo e sorteado, entao pode repetir. Duas lojas com o mesmo codigo fazem
+// o app do garcom encontrar duas linhas: o .maybeSingle() estoura e, pior, o
+// garcom pode acabar entrando na loja errada. Confere antes de usar.
+async function codigoJaExiste(codigo) {
+  const [emLojas, emConfig] = await Promise.all([
+    sb().from('lojas').select('id').eq('codigo_loja', codigo).limit(1),
+    sb().from('configuracoes').select('id').eq('codigo_loja', codigo).limit(1),
+  ])
+  // Na duvida (erro de rede), trata como existente para sortear outro
+  if (emLojas.error || emConfig.error) return true
+  return (emLojas.data?.length || 0) > 0 || (emConfig.data?.length || 0) > 0
+}
+
+async function gerarCodigoLojaUnico(tentativas = 8) {
+  for (let i = 0; i < tentativas; i++) {
+    const codigo = gerarCodigoLoja()
+    if (!(await codigoJaExiste(codigo))) return codigo
+  }
+  return null
+}
+
 function salvarLog(db, operacao, status, erro = null) {
   try {
     db.prepare(
@@ -112,7 +133,12 @@ async function deletarImagemStorage(storagePath) {
 async function criarLoja(db, nomeLoja) {
   try {
     const lojaId = crypto.randomUUID()
-    const codigoLoja = gerarCodigoLoja()
+    const codigoLoja = await gerarCodigoLojaUnico()
+    if (!codigoLoja) {
+      console.error('[supabaseSync] nao foi possivel gerar um codigo de loja unico')
+      salvarLog(db, 'criar_loja', 'erro', 'codigo de loja unico nao gerado')
+      return null
+    }
 
     const { error: errLoja } = await sb().from('lojas').insert({
       id: lojaId,
@@ -586,6 +612,7 @@ module.exports = {
   deletarGarcom,
   salvarLog,
   gerarCodigoLoja,
+  gerarCodigoLojaUnico,
   sincronizarMesaCriada,
   sincronizarMesaAtualizada,
   sincronizarMesaDeletada,

@@ -31,3 +31,8 @@ npm-debug.log*
 # Sistema
 .DS_Store
 Thumbs.db
+
+# Artefatos de depuracao (extracao de builds, logs de ativacao)
+app-extracted*/
+app-verify/
+log*.txt

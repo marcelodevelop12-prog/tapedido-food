@@ -814,13 +814,36 @@ const dbModule = {
     },
     atualizar(dados) {
       const { id, ...rest } = dados
+      // Colunas permitidas. Antes o nome da coluna vinha direto da chave enviada
+      // pelo renderer e era concatenado no SQL: chave nao mapeada entrava crua na
+      // query e um typo derrubava o UPDATE em runtime.
       const map = {
         tipoEntrega: 'tipo_entrega', nomeCliente: 'nome_cliente',
         formaPagamento: 'forma_pagamento', entregadorId: 'entregador_id',
+        telefoneCliente: 'telefone_cliente', bairroEntrega: 'bairro_entrega',
+        status: 'status', observacoes: 'observacoes', mesa: 'mesa',
+        total: 'total', subtotal: 'subtotal', taxa_entrega: 'taxa_entrega',
+        kds_status: 'kds_status',
       }
-      const setCols = Object.keys(rest).map(k => `${map[k] || k} = ?`).join(', ')
-      db.prepare(`UPDATE pedidos SET ${setCols}, atualizado_em = ? WHERE id = ?`)
-        .run(...Object.values(rest), agora(), id)
+
+      const colunas = []
+      const valores = []
+      for (const [chave, valor] of Object.entries(rest)) {
+        const coluna = map[chave]
+        if (!coluna) {
+          console.warn('[pedidos.atualizar] campo ignorado (nao permitido):', chave)
+          continue
+        }
+        colunas.push(`${coluna} = ?`)
+        valores.push(valor)
+      }
+
+      if (colunas.length === 0) {
+        return db.prepare('SELECT * FROM pedidos WHERE id = ?').get(id)
+      }
+
+      db.prepare(`UPDATE pedidos SET ${colunas.join(', ')}, atualizado_em = ? WHERE id = ?`)
+        .run(...valores, agora(), id)
       return db.prepare('SELECT * FROM pedidos WHERE id = ?').get(id)
     },
     getById(id) {
