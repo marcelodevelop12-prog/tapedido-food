@@ -84,7 +84,25 @@ export default function Configuracoes() {
     e.preventDefault()
     setSalvando(true)
     try {
-      await api.config.update(config)
+      if (aba === 'impressora') {
+        await api.config.update({
+          impressora_largura: config.impressora_largura || '80mm',
+          impressora_nome: config.impressora_nome || null,
+          impressora_ip: config.impressora_ip || null,
+          impressora_porta: Number.isNaN(config.impressora_porta) ? null : (config.impressora_porta || null),
+        })
+        // impressao_automatica é uma coluna adicionada por migration — salva separado para
+        // não quebrar o save se o app ainda não foi reiniciado após a atualização
+        try {
+          await api.config.update({ impressao_automatica: config.impressao_automatica ? 1 : 0 })
+        } catch { /* coluna pode não existir ainda — ok */ }
+      } else {
+        await api.config.update({
+          tempo_entrega_min: Number.isNaN(config.tempo_entrega_min) ? 40 : (config.tempo_entrega_min || 40),
+          tempo_retirada_min: Number.isNaN(config.tempo_retirada_min) ? 20 : (config.tempo_retirada_min || 20),
+          pedido_minimo: Number.isNaN(config.pedido_minimo) ? 0 : (config.pedido_minimo ?? 0),
+        })
+      }
       toast.success('Configurações salvas!')
     } catch { toast.error('Erro ao salvar') }
     finally { setSalvando(false) }
@@ -374,6 +392,15 @@ export default function Configuracoes() {
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-700">
             <strong>💡 Dica:</strong> Para impressoras USB, informe o nome exato como aparece no Windows (Painel de Controle → Dispositivos e Impressoras). Para impressoras de rede, informe o IP e porta.
           </div>
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={!!config.impressao_automatica}
+              onChange={e => setConfig(p => ({ ...p, impressao_automatica: e.target.checked ? 1 : 0 }))}
+              className="w-4 h-4 accent-orange-500"
+            />
+            <span className="text-sm text-gray-700">Imprimir cupom automaticamente ao fechar conta da mesa</span>
+          </label>
           <button type="submit" disabled={salvando} className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-5 py-2.5 rounded-lg font-medium transition-colors disabled:opacity-50">
             <Save size={16} />
             {salvando ? 'Salvando...' : 'Salvar Configurações'}

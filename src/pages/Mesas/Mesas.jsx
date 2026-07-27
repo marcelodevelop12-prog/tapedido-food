@@ -37,9 +37,22 @@ export default function Mesas() {
 
   useRealtimeMesas(setMesas)
 
+  // Escuta eventos do garcom via IPC
+  useEffect(() => {
+    if (!window.api?.realtime) return
+    window.api.realtime.onNovoItem(() => {
+      api.comandas.listarAbertas().then(setComandas).catch(() => {})
+    })
+    window.api.realtime.onComandaFechada(() => {
+      api.comandas.listarAbertas().then(setComandas).catch(() => {})
+      api.mesas.listar().then(setMesas).catch(() => {})
+    })
+    return () => window.api.realtime.off()
+  }, [])
+
   const { pedidosNovos, limparPedidosMesa } = useRealtimePedidos((pedido) => {
     toast(
-      `🛎️ Novo pedido — ${pedido.mesa_nome || `Mesa ${pedido.mesa_numero || '?'}`}`,
+      `🛎️ Novo pedido — ${pedido.mesa_nome || `Mesa ${pedido.mesa_numero || '?'}`}`,
       { duration: 6000, style: { background: '#f97316', color: '#fff', fontWeight: 600 } }
     )
     api.comandas.listarAbertas().then(setComandas).catch(() => {})
@@ -52,7 +65,7 @@ export default function Mesas() {
     : null
 
   // Itens do garçom em tempo real para a mesa selecionada
-  const { itens: itensSupabase, supabaseComandaId } = useRealtimeComandaItens(mesaAtualizada)
+  const { itens: itensSupabase, supabaseComandaId, carregando: carregandoItens } = useRealtimeComandaItens(mesaAtualizada)
 
   useEffect(() => { carregar() }, [])
 
@@ -131,6 +144,47 @@ export default function Mesas() {
     } catch {
       toast.error('Conta registrada no caixa, mas erro ao fechar comanda')
     }
+
+    // Registra o fechamento de mesa como pedido para aparecer na pagina de Pedidos
+    try {
+      const itensParaPedido = itensSupabase.length > 0 ? itensSupabase : (comanda?.itens || [])
+      await api.pedidos.criar({
+        tipo_entrega: 'mesa',
+        nome_cliente: mesa.nome || `Mesa ${mesa.numero}`,
+        forma_pagamento: formaPagamento,
+        total,
+        status: 'entregue',
+        mesa: mesa.nome || `Mesa ${mesa.numero}`,
+        itens: itensParaPedido.map(i => ({
+          nome_item: i.nome_item,
+          quantidade: i.quantidade,
+          preco_unitario: i.preco_unitario,
+          subtotal: i.subtotal ?? (i.preco_unitario * i.quantidade),
+        })),
+      })
+    } catch {
+      // Nao critico — o caixa ja foi registrado
+    }
+
+    // Impressao automatica ao fechar conta
+    try {
+      const cfg = await api.config.get()
+      if (cfg?.impressao_automatica) {
+        const itensParaImprimir = itensSupabase.length > 0 ? itensSupabase : (comanda?.itens || [])
+        api.impressao.recibo({
+          tipo: 'mesa',
+          mesa: mesa.nome || `Mesa ${mesa.numero}`,
+          formaPagamento,
+          total,
+          itens: itensParaImprimir.map(i => ({
+            nome_item: i.nome_item,
+            quantidade: i.quantidade,
+            preco_unitario: i.preco_unitario,
+            subtotal: i.subtotal ?? (i.preco_unitario * i.quantidade),
+          })),
+        }).catch(() => {})
+      }
+    } catch { /* silencioso — nao travar fechamento */ }
   }
 
   async function criarMesas() {
@@ -188,7 +242,7 @@ export default function Mesas() {
             {mesas.filter(m => m.status === 'ocupada').length} ocupadas · {mesas.filter(m => m.status === 'livre').length} livres
             {pedidosNovos.length > 0 && (
               <span className="ml-2 inline-flex items-center gap-1 bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded-full animate-pulse">
-                🛎️ {pedidosNovos.length} novo{pedidosNovos.length > 1 ? 's' : ''}
+                🛎️ {pedidosNovos.length} novo{pedidosNovos.length > 1 ? 's' : ''}
               </span>
             )}
           </p>
@@ -289,6 +343,7 @@ export default function Mesas() {
               mesa={mesaSelecionada}
               comanda={comandaAtiva || comandaPorMesa(mesaSelecionada.id)}
               itensSupabase={itensSupabase}
+              carregandoItens={carregandoItens}
               onFechar={() => { setMesaSelecionada(null); setComandaAtiva(null) }}
               onAdicionarItem={() => setMostrarNovoPedido(true)}
               onFecharConta={() => setMostrarPagamento(true)}
@@ -391,7 +446,7 @@ export default function Mesas() {
   )
 }
 
-function ComandaDetalhe({ mesa, comanda, itensSupabase, onFechar, onAdicionarItem, onFecharConta, onAtualizar }) {
+function ComandaDetalhe({ mesa, comanda, itensSupabase, carregandoItens, onFechar, onAdicionarItem, onFecharConta, onAtualizar }) {
   async function removerItem(item) {
     try {
       // Item do Supabase tem comanda_id UUID; item local tem comanda_id integer
@@ -427,9 +482,13 @@ function ComandaDetalhe({ mesa, comanda, itensSupabase, onFechar, onAdicionarIte
       </div>
 
       <div className="flex-1 overflow-y-auto p-5">
-        {itens.length === 0 ? (
+        {carregandoItens ? (
           <div className="text-center text-gray-400 py-10">
-            <div className="text-4xl mb-2">📋</div>
+            <div className="w-6 h-6 border-2 border-orange-400 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+            <p className="text-sm">Carregando...</p>
+          </div>
+        ) : itens.length === 0 ? (
+          <div className="text-center text-gray-400 py-10">
             <p className="text-sm">Comanda vazia</p>
           </div>
         ) : (

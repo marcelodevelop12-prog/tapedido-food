@@ -1,4 +1,4 @@
-﻿const { createClient } = require('@supabase/supabase-js')
+const { createClient } = require('@supabase/supabase-js')
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
@@ -26,7 +26,7 @@ function sb() {
 
 const agora = () => new Date().toISOString()
 
-// â"€â"€ Helpers â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Helpers ────────────────────────────────────────────────────────────────
 
 function gerarCodigoLoja() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -107,7 +107,7 @@ async function deletarImagemStorage(storagePath) {
   } catch {}
 }
 
-// â"€â"€ Tarefa 1 â€" Criacao de loja â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Tarefa 1 — Criacao de loja ─────────────────────────────────────────────
 
 async function criarLoja(db, nomeLoja) {
   try {
@@ -136,7 +136,7 @@ async function criarLoja(db, nomeLoja) {
     })
     if (errCfg) {
       console.error('[supabaseSync] erro ao criar configuracoes:', errCfg.message, errCfg.code)
-      // Tenta UPDATE caso a linha jÃ¡ exista
+      // Tenta UPDATE caso a linha já exista
       await sb().from('configuracoes').update({ codigo_loja: codigoLoja }).eq('loja_id', lojaId)
     }
 
@@ -149,7 +149,7 @@ async function criarLoja(db, nomeLoja) {
   }
 }
 
-// â"€â"€ Tarefa 2 â€" Sincronizacao de produtos â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Tarefa 2 — Sincronizacao de produtos ──────────────────────────────────
 
 async function sincronizarProdutoCriado(db, produto, lojaId) {
   if (!lojaId) return
@@ -262,13 +262,15 @@ async function toggleDisponivelSupabase(db, supabaseId, disponivel) {
   }
 }
 
-// â"€â"€ Status de conexao â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Status de conexao ──────────────────────────────────────────────────────
 
 async function verificarConexao() {
   try {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), 5000)
-    const { error } = await sb().from('lojas').select('id').limit(1)
+    // O signal precisa ser passado para a query, senao o timeout nao tem efeito
+    // e a verificacao fica pendurada ate o timeout padrao da rede.
+    const { error } = await sb().from('lojas').select('id').limit(1).abortSignal(controller.signal)
     clearTimeout(timer)
     return !error
   } catch {
@@ -276,7 +278,7 @@ async function verificarConexao() {
   }
 }
 
-// â"€â"€ Garcons â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Garcons ────────────────────────────────────────────────────────────────
 
 async function listarGarcons(lojaId) {
   try {
@@ -309,7 +311,7 @@ async function deletarGarcom(id) {
   return { sucesso: true }
 }
 
-// â"€â"€ Mesas â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€â"€
+// ── Mesas ──────────────────────────────────────────────────────────────────
 
 async function sincronizarMesaCriada(lojaId, mesa) {
   if (!lojaId) return null
@@ -366,13 +368,13 @@ async function sincronizarMesaDeletada(supabaseId) {
 
 async function fecharComandaSupabase(mesaSupabaseId) {
   if (!mesaSupabaseId) {
-    console.error('[supabaseSync] fecharComandaSupabase: mesaSupabaseId e null/undefined â€" abortando')
+    console.error('[supabaseSync] fecharComandaSupabase: mesaSupabaseId e null/undefined — abortando')
     return
   }
 
   console.log('[supabaseSync] fecharComandaSupabase: iniciando para mesa.supabase_id =', mesaSupabaseId)
 
-  // Fecha a comanda ativa no Supabase â€" erros aqui nao bloqueiam o UPDATE da mesa
+  // Fecha a comanda ativa no Supabase — erros aqui nao bloqueiam o UPDATE da mesa
   try {
     const { data: dataComanda, error: errComanda } = await sb()
       .from('comandas')
@@ -474,6 +476,28 @@ async function reconciliarMesasStartup(rawDb, lojaId) {
 
 // ── Realtime ──────────────────────────────────────────────────────────────────
 
+// Cache de comanda_id -> pertence a esta loja. Evita uma consulta por item.
+const donoDaComanda = new Map()
+
+async function itemPertenceALoja(comandaId, lojaId) {
+  if (!comandaId) return false
+  if (donoDaComanda.has(comandaId)) return donoDaComanda.get(comandaId)
+  try {
+    const { data, error } = await sb()
+      .from('comandas')
+      .select('id')
+      .eq('id', comandaId)
+      .eq('loja_id', lojaId)
+      .maybeSingle()
+    if (error) return false
+    const pertence = !!data
+    donoDaComanda.set(comandaId, pertence)
+    return pertence
+  } catch {
+    return false
+  }
+}
+
 function iniciarRealtime(lojaId, mainWindow, db) {
   if (!lojaId) return
 
@@ -482,7 +506,11 @@ function iniciarRealtime(lojaId, mainWindow, db) {
       event: 'INSERT',
       schema: 'public',
       table: 'comanda_itens',
-    }, (payload) => {
+    }, async (payload) => {
+      // comanda_itens nao tem loja_id, entao nao da para filtrar no servidor:
+      // este canal recebe itens de TODAS as lojas. Confirma o dono pela
+      // comanda antes de repassar, senao o PDV exibe item de outro cliente.
+      if (!(await itemPertenceALoja(payload.new.comanda_id, lojaId))) return
       console.log('[Realtime] comanda_itens INSERT:', payload.new)
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('realtime:novoItem', payload.new)
@@ -499,20 +527,47 @@ function iniciarRealtime(lojaId, mainWindow, db) {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('realtime:comandaFechada', payload.new)
       }
-      // Registra venda no caixa automaticamente
+      // Registra venda no caixa automaticamente.
+      //
+      // Cuidado: quando e o PROPRIO PDV que fecha a mesa, ele ja lancou a venda
+      // no caixa e so depois marcou a comanda como fechada no Supabase — o que
+      // faz este mesmo listener receber o eco da alteracao. Lancar aqui de novo
+      // duplicava toda venda de mesa fechada pelo PDV.
+      //
+      // Quem fecha pelo app do garcom sempre grava forma_pagamento; o PDV nao
+      // grava. A ausencia do campo identifica o eco.
       try {
-        const formaPagamento = payload.new.forma_pagamento || 'dinheiro'
+        const formaPagamento = payload.new.forma_pagamento
         const total = payload.new.total || 0
-        if (total > 0) {
+        if (!formaPagamento) {
+          console.log('[Realtime] comanda fechada pelo proprio PDV, venda ja lancada — ignorando')
+        } else if (total > 0) {
           db.caixa.registrarVenda({
             formaPagamento,
             valor: total,
-            descricao: `Mesa fechada pelo garçom`,
+            descricao: 'Mesa fechada pelo garçom',
+            refExterna: `comanda:${payload.new.id}`,
           })
           console.log('[Realtime] venda registrada no caixa:', total, formaPagamento)
         }
       } catch (err) {
         console.error('[Realtime] erro ao registrar venda:', err.message)
+      }
+      // Impressao automatica se configurado
+      try {
+        const cfg = db.config.get()
+        if (cfg?.impressao_automatica) {
+          const itens = payload.new.itens || []
+          db.impressao.recibo({
+            tipo: 'mesa',
+            mesa: payload.new.mesa_nome || 'Mesa',
+            formaPagamento: payload.new.forma_pagamento || 'dinheiro',
+            total: payload.new.total || 0,
+            itens,
+          })
+        }
+      } catch (err) {
+        console.error('[Realtime] erro ao imprimir recibo:', err.message)
       }
     })
     .subscribe((status) => {

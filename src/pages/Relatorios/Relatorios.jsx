@@ -54,7 +54,8 @@ export default function Relatorios() {
           startY: 50,
           head: [['Período', 'Pedidos', 'Receita', 'Ticket Médio']],
           body: dadosVendas.map(d => [
-            d.periodo, d.total_pedidos,
+            new Date(d.periodo + 'T12:00:00').toLocaleDateString('pt-BR'),
+            d.total_pedidos,
             formatarMoeda(d.receita),
             formatarMoeda(d.ticket_medio),
           ]),
@@ -195,7 +196,9 @@ export default function Relatorios() {
                   <tbody className="divide-y divide-gray-50">
                     {dadosVendas.map(d => (
                       <tr key={d.periodo} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-sm text-gray-700">{d.periodo}</td>
+                        <td className="px-4 py-3 text-sm text-gray-700">
+                          {new Date(d.periodo + 'T12:00:00').toLocaleDateString('pt-BR')}
+                        </td>
                         <td className="px-4 py-3 text-right text-sm font-medium text-gray-800">{d.total_pedidos}</td>
                         <td className="px-4 py-3 text-right text-sm font-bold text-green-600">{formatarMoeda(d.receita)}</td>
                         <td className="px-4 py-3 text-right text-sm text-gray-600">{formatarMoeda(d.ticket_medio)}</td>

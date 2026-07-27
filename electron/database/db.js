@@ -337,6 +337,10 @@ for (const col of ['supabase_loja_id TEXT', 'codigo_loja TEXT']) {
 }
 try { db.exec(`ALTER TABLE menu_items ADD COLUMN supabase_id TEXT`) } catch {}
 try { db.exec(`ALTER TABLE mesas ADD COLUMN supabase_id TEXT`) } catch {}
+try { db.exec(`ALTER TABLE configuracoes ADD COLUMN impressao_automatica INTEGER DEFAULT 0`) } catch {}
+// ref_externa identifica a origem da venda (ex.: 'comanda:<uuid>', 'pedido:<id>')
+// para que a mesma venda nunca seja lancada duas vezes no caixa.
+try { db.exec(`ALTER TABLE caixa_movimentacoes ADD COLUMN ref_externa TEXT`) } catch {}
 try {
   db.exec(`CREATE TABLE IF NOT EXISTS sync_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -349,6 +353,17 @@ try {
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const agora = () => new Date().toISOString()
+
+// O PDV grava 'debito'/'pix'; o app do garcom grava 'Débito'/'PIX'. Sem
+// normalizar, o colMap do caixa nao encontra a coluna e o total da sessao
+// deixa de somar a venda silenciosamente.
+function normalizarFormaPagamento(valor) {
+  return String(valor || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+}
 
 function getMachineId() {
   const data = [
@@ -667,7 +682,7 @@ const dbModule = {
     deletar(id) {
       const mesa = db.prepare('SELECT * FROM mesas WHERE id = ?').get(id)
       db.prepare('DELETE FROM mesas WHERE id = ?').run(id)
-      return { sucesso: true, supabase_id: mesa?.supabase_id || null }
+      return { sucesso: true, supabase_id: mesa?.supabase_id || null, numero: mesa?.numero || null }
     },
   },
 
@@ -936,33 +951,45 @@ const dbModule = {
       db.prepare('UPDATE caixa_sessoes SET total_suprimento = total_suprimento + ? WHERE id = ?').run(dados.valor, sessao.id)
       return { sucesso: true }
     },
-    registrarVendaDelivery(dados) {
+    // Caminho unico de lancamento de venda. `refExterna` e opcional: quando
+    // informada, a mesma venda nunca e lancada duas vezes (protege contra o
+    // eco do realtime e contra clique duplo).
+    lancarVenda(tipo, dados) {
       const sessao = db.prepare("SELECT * FROM caixa_sessoes WHERE status = 'aberto' LIMIT 1").get()
       if (!sessao) return { erro: 'Nenhum caixa aberto' }
+
+      if (dados.refExterna) {
+        const existente = db
+          .prepare('SELECT id FROM caixa_movimentacoes WHERE ref_externa = ? LIMIT 1')
+          .get(dados.refExterna)
+        if (existente) {
+          console.log('[caixa] venda ja lancada, ignorando duplicata:', dados.refExterna)
+          return { sucesso: true, duplicada: true }
+        }
+      }
+
+      const forma = normalizarFormaPagamento(dados.formaPagamento) || 'dinheiro'
       const colMap = { dinheiro: 'total_dinheiro', pix: 'total_pix', debito: 'total_debito', credito: 'total_credito' }
-      const col = colMap[dados.formaPagamento]
+      const col = colMap[forma]
+      if (!col) {
+        console.warn('[caixa] forma de pagamento desconhecida:', dados.formaPagamento, '- total da sessao nao sera somado')
+      }
+
       db.prepare(`
-        INSERT INTO caixa_movimentacoes (sessao_id, tipo, forma_pagamento, valor, descricao, criado_em)
-        VALUES (?, 'venda_delivery', ?, ?, ?, ?)
-      `).run(sessao.id, dados.formaPagamento, dados.valor, dados.descricao || '', agora())
+        INSERT INTO caixa_movimentacoes (sessao_id, tipo, forma_pagamento, valor, descricao, ref_externa, criado_em)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(sessao.id, tipo, forma, dados.valor, dados.descricao || '', dados.refExterna || null, agora())
+
       if (col) {
         db.prepare(`UPDATE caixa_sessoes SET ${col} = ${col} + ? WHERE id = ?`).run(dados.valor, sessao.id)
       }
       return { sucesso: true }
     },
+    registrarVendaDelivery(dados) {
+      return dbModule.caixa.lancarVenda('venda_delivery', dados)
+    },
     registrarVenda(dados) {
-      const sessao = db.prepare("SELECT * FROM caixa_sessoes WHERE status = 'aberto' LIMIT 1").get()
-      if (!sessao) return { erro: 'Nenhum caixa aberto' }
-      const colMap = { dinheiro: 'total_dinheiro', pix: 'total_pix', debito: 'total_debito', credito: 'total_credito' }
-      const col = colMap[dados.formaPagamento]
-      db.prepare(`
-        INSERT INTO caixa_movimentacoes (sessao_id, tipo, forma_pagamento, valor, descricao, criado_em)
-        VALUES (?, 'venda', ?, ?, ?, ?)
-      `).run(sessao.id, dados.formaPagamento, dados.valor, dados.descricao || '', agora())
-      if (col) {
-        db.prepare(`UPDATE caixa_sessoes SET ${col} = ${col} + ? WHERE id = ?`).run(dados.valor, sessao.id)
-      }
-      return { sucesso: true }
+      return dbModule.caixa.lancarVenda('venda', dados)
     },
     movimentacoes(sessaoId) {
       return db.prepare('SELECT * FROM caixa_movimentacoes WHERE sessao_id = ? ORDER BY criado_em DESC').all(sessaoId)
@@ -1146,14 +1173,22 @@ const dbModule = {
       return db.prepare('SELECT * FROM configuracoes LIMIT 1').get()
     },
     update(dados) {
+      // descobre as colunas reais da tabela para nao gerar SQL invalido
+      const colunasValidas = new Set(
+        db.prepare(`PRAGMA table_info(configuracoes)`).all().map(r => r.name)
+      )
+      const filtrado = Object.fromEntries(
+        Object.entries(dados).filter(([k]) => colunasValidas.has(k) && k !== 'id')
+      )
+      if (Object.keys(filtrado).length === 0) return db.prepare('SELECT * FROM configuracoes LIMIT 1').get()
       const cfg = db.prepare('SELECT id FROM configuracoes LIMIT 1').get()
       if (cfg) {
-        const cols = Object.keys(dados).map(k => `${k} = ?`).join(', ')
-        db.prepare(`UPDATE configuracoes SET ${cols} WHERE id = ?`).run(...Object.values(dados), cfg.id)
+        const cols = Object.keys(filtrado).map(k => `${k} = ?`).join(', ')
+        db.prepare(`UPDATE configuracoes SET ${cols} WHERE id = ?`).run(...Object.values(filtrado), cfg.id)
       } else {
-        const keys = Object.keys(dados).join(', ')
-        const vals = Object.keys(dados).map(() => '?').join(', ')
-        db.prepare(`INSERT INTO configuracoes (${keys}) VALUES (${vals})`).run(...Object.values(dados))
+        const keys = Object.keys(filtrado).join(', ')
+        const vals = Object.keys(filtrado).map(() => '?').join(', ')
+        db.prepare(`INSERT INTO configuracoes (${keys}) VALUES (${vals})`).run(...Object.values(filtrado))
       }
       return db.prepare('SELECT * FROM configuracoes LIMIT 1').get()
     },

@@ -11,7 +11,7 @@ const navItems = [
   { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { path: '/cardapio', icon: BookOpen, label: 'Cardápio' },
   { path: '/mesas', icon: Grid3X3, label: 'Mesas' },
-  { path: '/delivery', icon: Truck, label: 'Delivery' },
+  { path: '/delivery', icon: Truck, label: 'Pedidos' },
   { path: '/estoque', icon: Package, label: 'Estoque' },
   { path: '/caixa', icon: DollarSign, label: 'Caixa' },
   { path: '/financeiro', icon: TrendingUp, label: 'Financeiro' },

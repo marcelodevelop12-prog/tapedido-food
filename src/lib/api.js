@@ -95,7 +95,12 @@ function mockApi() {
       criar: async (d) => { const n = { ...d, id: Date.now(), numero_pedido: pedidos.length + 1, status: 'recebido', criado_em: new Date().toISOString() }; pedidos.unshift(n); return n },
       atualizar: async (d) => { const i = pedidos.findIndex(p => p.id === d.id); if (i >= 0) pedidos[i] = { ...pedidos[i], ...d }; return pedidos[i] },
       getById: async (id) => pedidos.find(p => p.id === id),
-      dashboard: async () => ({ receitaHoje: 382.50, pedidosAbertos: 3, pedidosHoje: 8, ticketMedio: 47.81 }),
+      dashboard: async (periodo) => ({
+        receitaHoje: periodo === '7dias' ? 2678.50 : periodo === '30dias' ? 11450.00 : 382.50,
+        pedidosAbertos: 3,
+        pedidosHoje: periodo === '7dias' ? 56 : periodo === '30dias' ? 240 : 8,
+        ticketMedio: 47.81,
+      }),
     },
     estoque: {
       listar: async () => produtos,
@@ -107,6 +112,8 @@ function mockApi() {
       sessaoAtual: async () => ({ id: 1, aberto_em: new Date(Date.now() - 28800000).toISOString(), valor_inicial: 100, total_dinheiro: 82, total_pix: 116, total_debito: 41, total_credito: 63, total_sangria: 0, total_suprimento: 0, status: 'aberto' }),
       abrir: async (d) => ({ id: Date.now(), ...d, status: 'aberto', aberto_em: new Date().toISOString() }),
       fechar: async () => ({ sucesso: true }),
+      registrarVenda: async () => ({ sucesso: true }),
+      registrarVendaDelivery: async () => ({ sucesso: true }),
       sangria: async () => ({ sucesso: true }),
       suprimento: async () => ({ sucesso: true }),
       movimentacoes: async () => [],

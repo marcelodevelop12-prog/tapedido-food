@@ -107,8 +107,22 @@ app.whenReady().then(() => {
   ipcMain.handle('mesas:criar', async (_, dados) => {
     const mesa = db.mesas.criar(dados)
     const lojaId = db.config.get()?.supabase_loja_id
-    if (lojaId) await supabaseSync.sincronizarMesaCriada(lojaId, mesa)
+    if (lojaId) {
+      const supabaseId = await supabaseSync.sincronizarMesaCriada(lojaId, mesa)
+      // Se o Supabase retornou um ID diferente (conflito com mesa já existente),
+      // atualiza o SQLite para usar o UUID que o garçom já conhece.
+      if (supabaseId && supabaseId !== mesa.supabase_id) {
+        db.getRawDb().prepare('UPDATE mesas SET supabase_id = ? WHERE id = ?').run(supabaseId, mesa.id)
+        mesa.supabase_id = supabaseId
+        console.log('[mesas:criar] supabase_id corrigido para', supabaseId)
+      }
+    }
     return mesa
+  })
+
+  ipcMain.handle('mesas:atualizarSupabaseId', (_, { localId, supabaseId }) => {
+    db.getRawDb().prepare('UPDATE mesas SET supabase_id = ? WHERE id = ?').run(supabaseId, localId)
+    return { sucesso: true }
   })
   ipcMain.handle('mesas:atualizar', async (_, dados) => {
     const mesa = db.mesas.atualizar(dados)
@@ -118,7 +132,19 @@ app.whenReady().then(() => {
   })
   ipcMain.handle('mesas:deletar', async (_, id) => {
     const resultado = db.mesas.deletar(id)
-    if (resultado.supabase_id) await supabaseSync.sincronizarMesaDeletada(resultado.supabase_id)
+    const lojaId = db.config.get()?.supabase_loja_id
+    if (lojaId) {
+      if (resultado.supabase_id) {
+        await supabaseSync.sincronizarMesaDeletada(resultado.supabase_id)
+      } else {
+        // Fallback: deleta pelo numero da mesa no Supabase
+        const { createClient } = require('@supabase/supabase-js')
+        const ws = require('ws')
+        const sbc = createClient('https://xckystaizmgubayuwtsx.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhja3lzdGFpem1ndWJheXV3dHN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2OTMyMTAsImV4cCI6MjA5NDI2OTIxMH0.kTXm_Vk9cF8shEcUZxOch50eaV9AXNgsjaElGl_Ctqk', { realtime: { transport: ws } })
+        await sbc.from('mesas').delete().eq('loja_id', lojaId).eq('numero', resultado.numero)
+        console.log('[mesas:deletar] fallback delete por numero:', resultado.numero)
+      }
+    }
     return resultado
   })
 
@@ -300,6 +326,20 @@ app.whenReady().then(() => {
   console.log('handlers registered')
 
   createWindow()
+
+  // Inicia Realtime do app do garcom
+  const realtimeCfg = db.config.get()
+  if (realtimeCfg?.supabase_loja_id) {
+    supabaseSync.iniciarRealtime(realtimeCfg.supabase_loja_id, mainWindow, db)
+    console.log('[Realtime] iniciado para loja:', realtimeCfg.supabase_loja_id)
+
+    // Reconcilia supabase_ids das mesas em background — corrige divergências entre
+    // o UUID local e o UUID que o garçom usa (id das mesas no Supabase).
+    setImmediate(() => {
+      supabaseSync.reconciliarMesasStartup(db.getRawDb(), realtimeCfg.supabase_loja_id)
+        .catch(e => console.error('[startup] reconciliarMesasStartup falhou:', e.message))
+    })
+  }
   updater.setupUpdater(mainWindow)
 
   app.on('activate', () => {
@@ -320,3 +360,4 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+

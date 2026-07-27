@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('api', {
     criar: (dados) => invoke('mesas:criar', dados),
     atualizar: (dados) => invoke('mesas:atualizar', dados),
     deletar: (id) => invoke('mesas:deletar', id),
+    atualizarSupabaseId: (localId, supabaseId) => invoke('mesas:atualizarSupabaseId', { localId, supabaseId }),
   },
 
   // Comandas
@@ -165,6 +166,16 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
 
+  // Realtime eventos do garcom
+  realtime: {
+    onNovoItem: (cb) => ipcRenderer.on('realtime:novoItem', (_, dados) => cb(dados)),
+    onComandaFechada: (cb) => ipcRenderer.on('realtime:comandaFechada', (_, dados) => cb(dados)),
+    off: () => {
+      ipcRenderer.removeAllListeners('realtime:novoItem')
+      ipcRenderer.removeAllListeners('realtime:comandaFechada')
+    },
+  },
+
   // Supabase / App Garçom
   supabase: {
     statusConexao: () => invoke('supabase:statusConexao'),
@@ -188,3 +199,4 @@ contextBridge.exposeInMainWorld('api', {
     offPeso: ()   => ipcRenderer.removeAllListeners('balanca:peso'),
   },
 })
+
