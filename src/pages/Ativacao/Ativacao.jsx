@@ -8,14 +8,32 @@ export default function Ativacao({ onAtivado }) {
   const [carregando, setCarregando] = useState(false)
   const [etapa, setEtapa] = useState('inicio') // inicio, ativando, erro
 
+  // Apenas cosmético. A validação real é feita em electron/database/db.js
+  // (variantesDeChave), que aceita a chave em qualquer grafia.
+  //
+  // Formato de produção atual: TAPF-XXXX-XXXX-XXXX (16 alfanuméricos), emitido
+  // pela Edge Function gerar-licenca. O ramo genérico de blocos de 4 cobre
+  // esse formato (e também o do seed de teste de 2026-05-13, que usa a mesma
+  // grafia mas não são licenças vendáveis).
+  //
+  // O ramo TPF abaixo é só para as chaves de 15 caracteres emitidas entre
+  // 2026-06-26 e 2026-07-30, quando a Edge Function tinha um bug (faltava o
+  // "A" do prefixo). Sem esse ramo a máscara reagruparia
+  // TPF-SZ1N-GP6A-D3FN como TPFS-Z1NG-P6AD-3FN e a ativação falharia.
   function formatarChave(valor) {
-    const limpo = valor.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 16)
+    // O limite é só uma barreira contra colagem absurda — nunca deve cortar uma
+    // chave real, senão o valor enviado para ativação sai incompleto.
+    const limpo = valor.replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 24)
+    if (limpo.startsWith('TPF')) {
+      const blocos = limpo.slice(3).match(/.{1,4}/g) || []
+      return blocos.length ? ['TPF', ...blocos].join('-') : limpo
+    }
     return limpo.match(/.{1,4}/g)?.join('-') || limpo
   }
 
   async function handleAtivar(e) {
     e.preventDefault()
-    if (chave.replace(/-/g, '').length < 8) {
+    if (chave.replace(/[^A-Za-z0-9]/g, '').length < 8) {
       toast.error('Digite uma chave de licença válida')
       return
     }
@@ -111,7 +129,7 @@ export default function Ativacao({ onAtivado }) {
                 type="text"
                 value={chave}
                 onChange={(e) => setChave(formatarChave(e.target.value))}
-                placeholder="XXXX-XXXX-XXXX-XXXX"
+                placeholder="TAPF-XXXX-XXXX-XXXX"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg text-center text-lg font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 disabled={carregando}
                 autoFocus
@@ -123,7 +141,7 @@ export default function Ativacao({ onAtivado }) {
 
             <button
               type="submit"
-              disabled={carregando || chave.replace(/-/g, '').length < 8}
+              disabled={carregando || chave.replace(/[^A-Za-z0-9]/g, '').length < 8}
               className="w-full bg-orange-500 hover:bg-orange-600 text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
             >
               {carregando ? (

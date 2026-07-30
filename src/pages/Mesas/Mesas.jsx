@@ -114,10 +114,18 @@ export default function Mesas() {
 
     // ── Operações de backend (assíncronas) ───────────────────────────────────
     try {
+      // refExterna trava a duplicidade no backend (clique duplo e eco do
+      // realtime). Usa o id do Supabase quando conhecido, que e a mesma chave
+      // que supabaseSync usa ao lancar a venda vinda do app do garcom.
+      const refExterna = supabaseComandaId
+        ? `comanda:${supabaseComandaId}`
+        : (comanda ? `comanda-local:${comanda.id}` : undefined)
+
       await api.caixa.registrarVenda({
         valor: total,
         formaPagamento,
         descricao: mesa.nome || `Mesa ${mesa.numero}`,
+        refExterna,
       })
     } catch {
       toast.error('Erro ao registrar no caixa')
@@ -149,21 +157,26 @@ export default function Mesas() {
     try {
       const itensParaPedido = itensSupabase.length > 0 ? itensSupabase : (comanda?.itens || [])
       await api.pedidos.criar({
-        tipo_entrega: 'mesa',
-        nome_cliente: mesa.nome || `Mesa ${mesa.numero}`,
-        forma_pagamento: formaPagamento,
+        tipoEntrega: 'mesa',
+        nomeCliente: mesa.nome || `Mesa ${mesa.numero}`,
+        formaPagamento,
+        subtotal: total,
         total,
         status: 'entregue',
         mesa: mesa.nome || `Mesa ${mesa.numero}`,
         itens: itensParaPedido.map(i => ({
-          nome_item: i.nome_item,
+          nomeItem: i.nome_item,
           quantidade: i.quantidade,
-          preco_unitario: i.preco_unitario,
+          precoUnitario: i.preco_unitario,
           subtotal: i.subtotal ?? (i.preco_unitario * i.quantidade),
         })),
       })
-    } catch {
-      // Nao critico — o caixa ja foi registrado
+    } catch (err) {
+      // O caixa ja foi registrado, entao a venda nao se perde — mas sem esta
+      // linha o pedido some dos relatorios. Falha silenciosa aqui foi o bug que
+      // escondeu todas as vendas de salao.
+      console.error('[fecharConta] falha ao registrar pedido da mesa:', err)
+      toast.error('Venda no caixa OK, mas não entrou no histórico de pedidos')
     }
 
     // Impressao automatica ao fechar conta

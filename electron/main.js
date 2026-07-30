@@ -37,29 +37,15 @@ function createWindow() {
     console.log(`[RENDERER LOG] ${message}`)
   })
 
-  mainWindow.webContents.on('did-finish-load', () => {
-    console.log('[RENDERER] did-finish-load disparou')
-    mainWindow.webContents.executeJavaScript(`
-      setTimeout(() => {
-        const root = document.getElementById('root');
-        console.log('[ROOT HTML]', root ? root.innerHTML.substring(0, 500) : 'NO ROOT');
-        const styles = document.styleSheets;
-        console.log('[STYLES COUNT]', styles.length);
-        const bg = window.getComputedStyle(document.body).backgroundColor;
-        console.log('[BODY BG]', bg);
-      }, 3000);
-    `).catch(err => console.error('[executeJavaScript error]', err.message))
-  })
-
   mainWindow.webContents.on('did-fail-load', (e, code, desc, url) => {
     console.error('[RENDERER] did-fail-load:', code, desc, url)
   })
 
-  mainWindow.webContents.on('dom-ready', () => {
-    console.log('[RENDERER] dom-ready disparou')
-  })
-
-  mainWindow.webContents.openDevTools() // diagnóstico — remover após fix
+  // DevTools só em desenvolvimento. Em produção ele expunha a chave anon e
+  // deixava o gate de licença (estado React) trivialmente editável pelo cliente.
+  if (isDev) {
+    mainWindow.webContents.openDevTools()
+  }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
@@ -75,6 +61,12 @@ app.whenReady().then(() => {
   // ── Database handlers ────────────────────────────────────────────────────
   // Must be inside whenReady so app.getPath('userData') is available in db.js
   const db = require('./database/db')
+
+  // Se a sessao anterior caiu com o demo ativo, o before-quit nao rodou e o banco
+  // ficou com dados ficticios. Limpa antes de qualquer tela aparecer.
+  try { db.licenca.limparDemoResidual() } catch (e) {
+    console.error('[startup] limparDemoResidual falhou:', e.message)
+  }
 
   // Licença
   ipcMain.handle('licenca:verificar', () => db.licenca.verificar())
@@ -138,10 +130,7 @@ app.whenReady().then(() => {
         await supabaseSync.sincronizarMesaDeletada(resultado.supabase_id)
       } else {
         // Fallback: deleta pelo numero da mesa no Supabase
-        const { createClient } = require('@supabase/supabase-js')
-        const ws = require('ws')
-        const sbc = createClient('https://xckystaizmgubayuwtsx.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhja3lzdGFpem1ndWJheXV3dHN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2OTMyMTAsImV4cCI6MjA5NDI2OTIxMH0.kTXm_Vk9cF8shEcUZxOch50eaV9AXNgsjaElGl_Ctqk', { realtime: { transport: ws } })
-        await sbc.from('mesas').delete().eq('loja_id', lojaId).eq('numero', resultado.numero)
+        await supabaseSync.deletarMesaPorNumero(lojaId, resultado.numero)
         console.log('[mesas:deletar] fallback delete por numero:', resultado.numero)
       }
     }

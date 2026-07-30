@@ -28,13 +28,21 @@ const agora = () => new Date().toISOString()
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+// crypto.randomInt e nao Math.random: o codigo da loja e credencial de acesso do
+// app do garcom, e Math.random e previsivel a partir de saidas observadas.
 function gerarCodigoLoja() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   let codigo = ''
   for (let i = 0; i < 6; i++) {
-    codigo += chars[Math.floor(Math.random() * chars.length)]
+    codigo += chars[crypto.randomInt(chars.length)]
   }
   return codigo
+}
+
+// Codigo de garcom inicial. Antes toda loja nascia com '1234' fixo: quem
+// descobrisse o codigo da loja entrava no salao de qualquer cliente.
+function gerarCodigoGarcom() {
+  return String(crypto.randomInt(1000, 10000))
 }
 
 // O codigo e sorteado, entao pode repetir. Duas lojas com o mesmo codigo fazem
@@ -155,9 +163,10 @@ async function criarLoja(db, nomeLoja) {
       return null
     }
 
+    const codigoGarcom = gerarCodigoGarcom()
     const { error: errCfg } = await sb().from('configuracoes').insert({
       loja_id: lojaId,
-      codigo_garcom: '1234',
+      codigo_garcom: codigoGarcom,
       codigo_loja: codigoLoja,
     })
     if (errCfg) {
@@ -392,6 +401,16 @@ async function sincronizarMesaDeletada(supabaseId) {
   }
 }
 
+// Fallback para mesa sem supabase_id. Fica aqui para o main.js nao precisar
+// instanciar um segundo cliente Supabase (com a chave repetida) a cada chamada.
+async function deletarMesaPorNumero(lojaId, numero) {
+  if (!lojaId || numero == null) return
+  const { error } = await sb().from('mesas').delete().eq('loja_id', lojaId).eq('numero', numero)
+  if (error) {
+    console.error('[supabaseSync] deletarMesaPorNumero ERRO:', error.message, error.code)
+  }
+}
+
 async function fecharComandaSupabase(mesaSupabaseId) {
   if (!mesaSupabaseId) {
     console.error('[supabaseSync] fecharComandaSupabase: mesaSupabaseId e null/undefined — abortando')
@@ -503,7 +522,18 @@ async function reconciliarMesasStartup(rawDb, lojaId) {
 // ── Realtime ──────────────────────────────────────────────────────────────────
 
 // Cache de comanda_id -> pertence a esta loja. Evita uma consulta por item.
+// Como o canal recebe itens de TODAS as lojas, o cache cresceria sem limite num
+// PDV que fica dias ligado. Descarta a entrada mais antiga ao atingir o teto.
 const donoDaComanda = new Map()
+const LIMITE_CACHE_COMANDAS = 500
+
+function lembrarDono(comandaId, pertence) {
+  if (donoDaComanda.size >= LIMITE_CACHE_COMANDAS) {
+    const maisAntiga = donoDaComanda.keys().next().value
+    donoDaComanda.delete(maisAntiga)
+  }
+  donoDaComanda.set(comandaId, pertence)
+}
 
 async function itemPertenceALoja(comandaId, lojaId) {
   if (!comandaId) return false
@@ -517,7 +547,7 @@ async function itemPertenceALoja(comandaId, lojaId) {
       .maybeSingle()
     if (error) return false
     const pertence = !!data
-    donoDaComanda.set(comandaId, pertence)
+    lembrarDono(comandaId, pertence)
     return pertence
   } catch {
     return false
@@ -616,6 +646,8 @@ module.exports = {
   sincronizarMesaCriada,
   sincronizarMesaAtualizada,
   sincronizarMesaDeletada,
+  deletarMesaPorNumero,
+  gerarCodigoGarcom,
   sincronizarTodasMesas,
   reconciliarMesasStartup,
   fecharComandaSupabase,

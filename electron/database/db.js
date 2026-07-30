@@ -357,12 +357,26 @@ const agora = () => new Date().toISOString()
 // O PDV grava 'debito'/'pix'; o app do garcom grava 'Débito'/'PIX'. Sem
 // normalizar, o colMap do caixa nao encontra a coluna e o total da sessao
 // deixa de somar a venda silenciosamente.
+// Apelidos aceitos para as 4 formas que o caixa sabe totalizar. O app do garcom
+// grava forma_pagamento livre e chega aqui pelo realtime; sem o mapa, variantes
+// como "cartao de credito" caiam no caminho "desconhecida" e o valor ficava fora
+// do total da sessao.
+const APELIDOS_PAGAMENTO = {
+  dinheiro: 'dinheiro', especie: 'dinheiro', money: 'dinheiro', cash: 'dinheiro',
+  pix: 'pix',
+  debito: 'debito', 'cartao de debito': 'debito', 'cartao debito': 'debito',
+  credito: 'credito', 'cartao de credito': 'credito', 'cartao credito': 'credito',
+  cartao: 'credito',
+}
+
 function normalizarFormaPagamento(valor) {
-  return String(valor || '')
+  const base = String(valor || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toLowerCase()
+    .replace(/\s+/g, ' ')
+  return APELIDOS_PAGAMENTO[base] || base
 }
 
 function getMachineId() {
@@ -373,6 +387,44 @@ function getMachineId() {
     os.cpus()[0]?.model || '',
   ].join('|')
   return crypto.createHash('sha256').update(data).digest('hex').slice(0, 32)
+}
+
+// Gera as grafias equivalentes de uma mesma chave de licença. O cliente pode
+// colar a chave em minúsculas, sem hífens, com espaços ou com os hífens em
+// posições erradas. A busca no Supabase é por igualdade exata, então tentamos
+// todas as grafias de uma vez.
+//
+// Formatos em circulação:
+//   TAPF-XXXX-XXXX-XXXX  produção atual, 16 alfanuméricos, gerado pela Edge
+//                        Function gerar-licenca (crypto.getRandomValues).
+//                        Também é o formato do lote de seed/teste de
+//                        2026-05-13 (esses não são licenças vendáveis).
+//   TPF-XXXX-XXXX-XXXX   legado, 15 alfanuméricos — a Edge Function gerava
+//                        assim (faltava o "A" do prefixo) entre 2026-06-26
+//                        e 2026-07-30, corrigida na versão 4. Mantido aqui
+//                        só para as chaves já emitidas nesse período ainda
+//                        ativarem.
+//
+// Obs.: formatarChave() em src/pages/Ativacao/Ativacao.jsx replica a forma
+// canônica só para exibição — esta função é a autoridade da validação.
+function variantesDeChave(valor) {
+  const limpo = String(valor || '').replace(/[^A-Za-z0-9]/g, '').toUpperCase()
+  if (!limpo) return []
+
+  const variantes = new Set()
+  variantes.add(limpo) // sem separadores
+
+  // Legado: TPF + 3 blocos de 4 (TPF-XXXX-XXXX-XXXX) — ver nota acima
+  if (limpo.startsWith('TPF')) {
+    const blocos = limpo.slice(3).match(/.{1,4}/g) || []
+    if (blocos.length) variantes.add(['TPF', ...blocos].join('-'))
+  }
+
+  // Legado: blocos uniformes de 4 (XXXX-XXXX-XXXX-XXXX)
+  const uniformes = limpo.match(/.{1,4}/g) || []
+  if (uniformes.length) variantes.add(uniformes.join('-'))
+
+  return [...variantes]
 }
 
 function proximoNumeroPedido() {
@@ -432,16 +484,20 @@ const dbModule = {
       }
 
       const machineId = getMachineId()
-      const chaveFinal = chave.replace(/\s/g, '').toUpperCase()
+      const variantes = variantesDeChave(chave)
+
+      if (variantes.length === 0) {
+        return { sucesso: false, erro: 'Chave inválida' }
+      }
 
       try {
-        console.log('[licenca:ativar] buscando chave:', chaveFinal)
+        console.log('[licenca:ativar] buscando chave, variantes:', variantes)
 
         const { data, error, status, statusText } = await supabase
           .from('licencas')
           .select('*')
-          .eq('chave', chaveFinal)
-          .maybeSingle()
+          .or(variantes.map((v) => `chave.eq.${v}`).join(','))
+          .limit(1)
 
         console.log('[licenca:ativar] resposta Supabase — status:', status, statusText)
         console.log('[licenca:ativar] data:', JSON.stringify(data))
@@ -451,28 +507,32 @@ const dbModule = {
           return { sucesso: false, erro: `Erro Supabase: ${error.message} (${error.code})` }
         }
 
-        if (!data) {
+        const registro = data?.[0]
+
+        if (!registro) {
           return { sucesso: false, erro: 'Chave de licença não encontrada' }
         }
 
-        if (data.status === 'revogada') {
+        if (registro.status === 'revogada') {
           return { sucesso: false, erro: 'Esta licença foi revogada' }
         }
 
-        if (data.status === 'usada' && data.machine_id !== machineId) {
+        if (registro.status === 'usada' && registro.machine_id !== machineId) {
           return { sucesso: false, erro: 'Esta licença já está ativada em outro computador' }
         }
 
         await supabase
           .from('licencas')
           .update({ status: 'usada', machine_id: machineId, ativada_em: agora() })
-          .eq('id', data.id)
+          .eq('id', registro.id)
 
+        // Salva a chave exatamente como está no Supabase — verificarPeriodicamente()
+        // consulta por igualdade exata usando este valor.
         db.prepare('DELETE FROM licenca').run()
         db.prepare(`
           INSERT INTO licenca (chave, machine_id, nome_cliente, email, ativada_em, modo_demo)
           VALUES (?, ?, ?, ?, ?, 0)
-        `).run(chaveFinal, machineId, data.nome_cliente || '', data.email_cliente || '', agora())
+        `).run(registro.chave, machineId, registro.nome_cliente || '', registro.email_cliente || '', agora())
 
         // Cria a loja no Supabase em background — não bloqueia a ativação
         setImmediate(async () => {
@@ -481,7 +541,7 @@ const dbModule = {
             if (jaTemLoja?.supabase_loja_id) return // já foi criada
 
             const lojaLocal = db.prepare('SELECT nome FROM lojas LIMIT 1').get()
-            const nomeLoja = lojaLocal?.nome || data.nome_cliente || 'Minha Loja'
+            const nomeLoja = lojaLocal?.nome || registro.nome_cliente || 'Minha Loja'
             const resultado = await supabaseSync.criarLoja(db, nomeLoja)
             if (resultado) {
               const cfg = db.prepare('SELECT id FROM configuracoes LIMIT 1').get()
@@ -498,7 +558,7 @@ const dbModule = {
           } catch {}
         })
 
-        return { sucesso: true, nomeCliente: data.nome_cliente }
+        return { sucesso: true, nomeCliente: registro.nome_cliente }
       } catch (err) {
         console.log('[licenca:ativar] exceção:', err)
         return { sucesso: false, erro: 'Erro de conexão. Verifique sua internet.' }
@@ -506,10 +566,32 @@ const dbModule = {
     },
 
     ativarDemo() {
-      // Demo is session-only: seed data is loaded but wiped on app close (see main.js before-quit)
+      // Demo e por sessao: os dados sao semeados e apagados no fechamento
+      // (ver main.js before-quit). A linha modo_demo=1 abaixo e o marcador
+      // persistente: se o app fechar por crash, o before-quit nao roda e era ela
+      // que faltava para saber, no proximo arranque, que o banco tem dado ficticio
+      // — sem ela a ativacao real seguinte herdava os produtos de demonstracao.
+      // verificar() filtra por modo_demo = 0, entao esta linha nunca libera o app.
       const { seed } = require('./seed')
       seed(db)
+      db.prepare('DELETE FROM licenca').run()
+      db.prepare(`
+        INSERT INTO licenca (chave, machine_id, ativada_em, modo_demo)
+        VALUES ('DEMO', ?, ?, 1)
+      `).run(getMachineId(), agora())
       return { sucesso: true }
+    },
+
+    // Roda no arranque. Só age quando existe o marcador de demo — nunca apaga
+    // dados a partir de palpite, porque limparDadosDemo() zera `configuracoes`,
+    // onde fica o vinculo da loja com o Supabase.
+    limparDemoResidual() {
+      const demo = db.prepare('SELECT id FROM licenca WHERE modo_demo = 1 LIMIT 1').get()
+      if (!demo) return { limpo: false }
+      dbModule.licenca.limparDadosDemo()
+      db.prepare('DELETE FROM licenca WHERE modo_demo = 1').run()
+      console.log('[licenca] dados de demonstracao residuais removidos')
+      return { limpo: true }
     },
 
     limparDadosDemo() {
@@ -727,23 +809,32 @@ const dbModule = {
     addItem(dados) {
       const { comandaId, menuItemId, nomeItem, quantidade, precoUnitario, sabor2, precoSabor2, adicionaisEscolhidos, observacao } = dados
       const subtotal = precoUnitario * quantidade
-      const result = db.prepare(`
-        INSERT INTO comanda_itens (comanda_id, menu_item_id, nome_item, quantidade, preco_unitario,
-          subtotal, sabor_2, preco_sabor_2, adicionais_escolhidos, observacao, criado_em)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(comandaId, menuItemId || null, nomeItem, quantidade, precoUnitario, subtotal,
-        sabor2 || null, precoSabor2 || null, JSON.stringify(adicionaisEscolhidos || []), observacao || '', agora())
+      // Item e total da comanda na mesma transacao: um item gravado sem o total
+      // recalculado faz a mesa fechar com valor errado.
+      const inserir = db.transaction(() => {
+        const result = db.prepare(`
+          INSERT INTO comanda_itens (comanda_id, menu_item_id, nome_item, quantidade, preco_unitario,
+            subtotal, sabor_2, preco_sabor_2, adicionais_escolhidos, observacao, criado_em)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(comandaId, menuItemId || null, nomeItem, quantidade, precoUnitario, subtotal,
+          sabor2 || null, precoSabor2 || null, JSON.stringify(adicionaisEscolhidos || []), observacao || '', agora())
 
-      const total = db.prepare('SELECT SUM(subtotal) as t FROM comanda_itens WHERE comanda_id = ?').get(comandaId)
-      db.prepare('UPDATE comandas SET total = ? WHERE id = ?').run(total.t || 0, comandaId)
-      return db.prepare('SELECT * FROM comanda_itens WHERE id = ?').get(result.lastInsertRowid)
+        const total = db.prepare('SELECT SUM(subtotal) as t FROM comanda_itens WHERE comanda_id = ?').get(comandaId)
+        db.prepare('UPDATE comandas SET total = ? WHERE id = ?').run(total.t || 0, comandaId)
+        return result.lastInsertRowid
+      })
+
+      return db.prepare('SELECT * FROM comanda_itens WHERE id = ?').get(inserir())
     },
     removeItem(id) {
       const item = db.prepare('SELECT * FROM comanda_itens WHERE id = ?').get(id)
       if (!item) return { erro: 'Item não encontrado' }
-      db.prepare('DELETE FROM comanda_itens WHERE id = ?').run(id)
-      const total = db.prepare('SELECT SUM(subtotal) as t FROM comanda_itens WHERE comanda_id = ?').get(item.comanda_id)
-      db.prepare('UPDATE comandas SET total = ? WHERE id = ?').run(total.t || 0, item.comanda_id)
+      const remover = db.transaction(() => {
+        db.prepare('DELETE FROM comanda_itens WHERE id = ?').run(id)
+        const total = db.prepare('SELECT SUM(subtotal) as t FROM comanda_itens WHERE comanda_id = ?').get(item.comanda_id)
+        db.prepare('UPDATE comandas SET total = ? WHERE id = ?').run(total.t || 0, item.comanda_id)
+      })
+      remover()
       return { sucesso: true }
     },
     listarAbertas() {
@@ -783,33 +874,79 @@ const dbModule = {
       }))
     },
     criar(dados) {
-      const numeroPedido = proximoNumeroPedido()
-      const result = db.prepare(`
-        INSERT INTO pedidos (numero_pedido, telefone_cliente, nome_cliente, tipo_entrega,
-          endereco_entrega, forma_pagamento, troco_para, taxa_entrega, subtotal, total,
-          status, origem, mesa, bairro_entrega, entregador_id, observacoes, criado_em, atualizado_em)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        numeroPedido, dados.telefoneCliente || '', dados.nomeCliente || '',
-        dados.tipoEntrega, JSON.stringify(dados.enderecoEntrega || {}),
-        dados.formaPagamento || '', dados.trocoPara || null,
-        dados.taxaEntrega || 0, dados.subtotal, dados.total,
-        'recebido', dados.origem || 'pdv', dados.mesa || null,
-        dados.bairroEntrega || '', dados.entregadorId || null,
-        dados.observacoes || '', agora(), agora()
-      )
+      // Aceita camelCase e snake_case. As telas foram escritas nas duas convencoes
+      // e o descasamento fazia o INSERT falhar em `tipo_entrega`/`subtotal`
+      // (NOT NULL), silenciosamente, em toda venda de mesa.
+      const campo = (...nomes) => {
+        for (const n of nomes) {
+          if (dados[n] !== undefined && dados[n] !== null) return dados[n]
+        }
+        return undefined
+      }
 
-      const pedidoId = result.lastInsertRowid
-      for (const item of (dados.itens || [])) {
-        db.prepare(`
+      const tipoEntrega = campo('tipoEntrega', 'tipo_entrega')
+      if (!tipoEntrega) {
+        throw new Error('pedidos.criar: tipoEntrega e obrigatorio')
+      }
+
+      const itens = dados.itens || []
+      const itensNorm = itens.map((i) => ({
+        menuItemId: i.menuItemId ?? i.menu_item_id ?? null,
+        nomeItem: i.nomeItem ?? i.nome_item ?? '',
+        quantidade: i.quantidade ?? 0,
+        precoUnitario: i.precoUnitario ?? i.preco_unitario ?? 0,
+        subtotal: i.subtotal ?? ((i.precoUnitario ?? i.preco_unitario ?? 0) * (i.quantidade ?? 0)),
+        sabor2: i.sabor2 ?? i.sabor_2 ?? null,
+        precoSabor2: i.precoSabor2 ?? i.preco_sabor_2 ?? null,
+        adicionaisEscolhidos: i.adicionaisEscolhidos ?? i.adicionais_escolhidos ?? [],
+        observacao: i.observacao ?? '',
+      }))
+
+      // Sem subtotal explicito, deriva dos itens — a coluna e NOT NULL.
+      const subtotal = campo('subtotal') ?? itensNorm.reduce((a, i) => a + (i.subtotal || 0), 0)
+      const total = campo('total') ?? subtotal
+
+      // Transacao: pedido e itens entram juntos ou nao entram.
+      const inserir = db.transaction(() => {
+        const numeroPedido = proximoNumeroPedido()
+        const result = db.prepare(`
+          INSERT INTO pedidos (numero_pedido, telefone_cliente, nome_cliente, tipo_entrega,
+            endereco_entrega, forma_pagamento, troco_para, taxa_entrega, subtotal, total,
+            status, origem, mesa, bairro_entrega, entregador_id, observacoes, criado_em, atualizado_em)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          numeroPedido,
+          campo('telefoneCliente', 'telefone_cliente') || '',
+          campo('nomeCliente', 'nome_cliente') || '',
+          tipoEntrega,
+          JSON.stringify(campo('enderecoEntrega', 'endereco_entrega') || {}),
+          campo('formaPagamento', 'forma_pagamento') || '',
+          campo('trocoPara', 'troco_para') || null,
+          campo('taxaEntrega', 'taxa_entrega') || 0,
+          subtotal, total,
+          campo('status') || 'recebido',
+          campo('origem') || 'pdv',
+          campo('mesa') || null,
+          campo('bairroEntrega', 'bairro_entrega') || '',
+          campo('entregadorId', 'entregador_id') || null,
+          campo('observacoes') || '', agora(), agora()
+        )
+
+        const pedidoId = result.lastInsertRowid
+        const stmtItem = db.prepare(`
           INSERT INTO itens_pedido (pedido_id, menu_item_id, nome_item, quantidade, preco_unitario,
             subtotal, sabor_2, preco_sabor_2, adicionais_escolhidos, observacao)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(pedidoId, item.menuItemId || null, item.nomeItem, item.quantidade,
-          item.precoUnitario, item.subtotal, item.sabor2 || null, item.precoSabor2 || null,
-          JSON.stringify(item.adicionaisEscolhidos || []), item.observacao || '')
-      }
+        `)
+        for (const item of itensNorm) {
+          stmtItem.run(pedidoId, item.menuItemId, item.nomeItem, item.quantidade,
+            item.precoUnitario, item.subtotal, item.sabor2, item.precoSabor2,
+            JSON.stringify(item.adicionaisEscolhidos), item.observacao)
+        }
+        return pedidoId
+      })
 
+      const pedidoId = inserir()
       return db.prepare('SELECT * FROM pedidos WHERE id = ?').get(pedidoId)
     },
     atualizar(dados) {
@@ -862,13 +999,21 @@ const dbModule = {
         dataInicio = d.toISOString().split('T')[0]
       }
 
-      // Delivery: receita dos pedidos não cancelados
+      // Delivery/retirada: receita vem da tabela de pedidos.
+      //
+      // Mesa fica DE FORA aqui de proposito. Toda venda de salao e lancada no
+      // caixa como tipo='venda' (ver Mesas.jsx -> caixa.registrarVenda) e desde
+      // a correcao de pedidos.criar tambem gera uma linha em `pedidos`. Somar as
+      // duas fontes sem este filtro conta cada venda de mesa duas vezes.
       const receitaPedidos = db.prepare(`
         SELECT COALESCE(SUM(total), 0) as total FROM pedidos
-        WHERE date(criado_em) BETWEEN ? AND ? AND status != 'cancelado'
+        WHERE date(criado_em) BETWEEN ? AND ?
+          AND status != 'cancelado'
+          AND COALESCE(tipo_entrega, '') != 'mesa'
       `).get(dataInicio, hoje).total
 
-      // Mesa: receita registrada no caixa (tipo='venda')
+      // Mesa: receita registrada no caixa (tipo='venda').
+      // 'venda_delivery' fica de fora — ja esta contabilizada em receitaPedidos.
       const receitaCaixa = db.prepare(`
         SELECT COALESCE(SUM(valor), 0) as total FROM caixa_movimentacoes
         WHERE date(criado_em) BETWEEN ? AND ? AND tipo = 'venda'
@@ -901,21 +1046,39 @@ const dbModule = {
     },
     movimentar(dados) {
       const { menuItemId, tipo, quantidade, custoUnitario, motivo, fornecedorId, pedidoId } = dados
-      db.prepare(`
-        INSERT INTO estoque_movimentacoes (menu_item_id, fornecedor_id, tipo, quantidade,
-          custo_unitario, motivo, pedido_id, criado_em)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(menuItemId, fornecedorId || null, tipo, quantidade, custoUnitario || null, motivo || '', pedidoId || null, agora())
 
-      if (tipo === 'entrada' || tipo === 'suprimento') {
-        db.prepare('UPDATE menu_items SET estoque_atual = estoque_atual + ? WHERE id = ?').run(quantidade, menuItemId)
-      } else if (tipo === 'saida' || tipo === 'perda') {
-        db.prepare('UPDATE menu_items SET estoque_atual = MAX(0, estoque_atual - ?) WHERE id = ?').run(quantidade, menuItemId)
-      } else if (tipo === 'inventario') {
-        db.prepare('UPDATE menu_items SET estoque_atual = ? WHERE id = ?').run(quantidade, menuItemId)
+      const anterior = db.prepare('SELECT estoque_atual FROM menu_items WHERE id = ?').get(menuItemId)
+      const saldoAnterior = anterior?.estoque_atual ?? 0
+      // MAX(0, ...) zera em silencio quando a saida excede o saldo. Detecta antes
+      // para poder avisar, em vez de o estoque simplesmente "sumir".
+      const excedeu = (tipo === 'saida' || tipo === 'perda') && quantidade > saldoAnterior
+
+      // Log e saldo precisam entrar juntos, senao o historico diverge do estoque.
+      const aplicar = db.transaction(() => {
+        db.prepare(`
+          INSERT INTO estoque_movimentacoes (menu_item_id, fornecedor_id, tipo, quantidade,
+            custo_unitario, motivo, pedido_id, criado_em)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(menuItemId, fornecedorId || null, tipo, quantidade, custoUnitario || null, motivo || '', pedidoId || null, agora())
+
+        if (tipo === 'entrada' || tipo === 'suprimento') {
+          db.prepare('UPDATE menu_items SET estoque_atual = estoque_atual + ? WHERE id = ?').run(quantidade, menuItemId)
+        } else if (tipo === 'saida' || tipo === 'perda') {
+          db.prepare('UPDATE menu_items SET estoque_atual = MAX(0, estoque_atual - ?) WHERE id = ?').run(quantidade, menuItemId)
+        } else if (tipo === 'inventario') {
+          db.prepare('UPDATE menu_items SET estoque_atual = ? WHERE id = ?').run(quantidade, menuItemId)
+        }
+      })
+      aplicar()
+
+      const produto = db.prepare('SELECT * FROM menu_items WHERE id = ?').get(menuItemId)
+      if (excedeu) {
+        return {
+          ...produto,
+          aviso: `Saída de ${quantidade} maior que o saldo (${saldoAnterior}). Estoque zerado.`,
+        }
       }
-
-      return db.prepare('SELECT * FROM menu_items WHERE id = ?').get(menuItemId)
+      return produto
     },
     alertas() {
       return db.prepare(`
@@ -939,7 +1102,9 @@ const dbModule = {
     },
     abrir(dados) {
       const existente = db.prepare("SELECT * FROM caixa_sessoes WHERE status = 'aberto' LIMIT 1").get()
-      if (existente) return existente
+      // Ja havia caixa aberto: o valorInicial informado e descartado. Sinaliza
+      // em vez de fingir que a abertura aconteceu com o valor pedido.
+      if (existente) return { ...existente, jaEstavaAberto: true }
       const result = db.prepare(`
         INSERT INTO caixa_sessoes (aberto_em, valor_inicial, status) VALUES (?, ?, 'aberto')
       `).run(agora(), dados.valorInicial || 0)
@@ -994,19 +1159,29 @@ const dbModule = {
       const forma = normalizarFormaPagamento(dados.formaPagamento) || 'dinheiro'
       const colMap = { dinheiro: 'total_dinheiro', pix: 'total_pix', debito: 'total_debito', credito: 'total_credito' }
       const col = colMap[forma]
-      if (!col) {
-        console.warn('[caixa] forma de pagamento desconhecida:', dados.formaPagamento, '- total da sessao nao sera somado')
-      }
 
-      db.prepare(`
-        INSERT INTO caixa_movimentacoes (sessao_id, tipo, forma_pagamento, valor, descricao, ref_externa, criado_em)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(sessao.id, tipo, forma, dados.valor, dados.descricao || '', dados.refExterna || null, agora())
+      // Forma desconhecida: a movimentacao e gravada, mas nenhuma coluna de total
+      // da sessao a acumula — o caixa fecharia sem bater e sem explicacao. Devolve
+      // um aviso para a tela mostrar, em vez de so logar no console.
+      const aviso = col
+        ? null
+        : `Forma de pagamento "${dados.formaPagamento}" não é reconhecida pelo caixa. ` +
+          `O valor foi registrado na movimentação, mas não entra no total da sessão.`
+      if (aviso) console.warn('[caixa]', aviso)
 
-      if (col) {
-        db.prepare(`UPDATE caixa_sessoes SET ${col} = ${col} + ? WHERE id = ?`).run(dados.valor, sessao.id)
-      }
-      return { sucesso: true }
+      const lancar = db.transaction(() => {
+        db.prepare(`
+          INSERT INTO caixa_movimentacoes (sessao_id, tipo, forma_pagamento, valor, descricao, ref_externa, criado_em)
+          VALUES (?, ?, ?, ?, ?, ?, ?)
+        `).run(sessao.id, tipo, forma, dados.valor, dados.descricao || '', dados.refExterna || null, agora())
+
+        if (col) {
+          db.prepare(`UPDATE caixa_sessoes SET ${col} = ${col} + ? WHERE id = ?`).run(dados.valor, sessao.id)
+        }
+      })
+      lancar()
+
+      return aviso ? { sucesso: true, aviso } : { sucesso: true }
     },
     registrarVendaDelivery(dados) {
       return dbModule.caixa.lancarVenda('venda_delivery', dados)
@@ -1020,7 +1195,10 @@ const dbModule = {
     resumo(sessaoId) {
       const sessao = db.prepare('SELECT * FROM caixa_sessoes WHERE id = ?').get(sessaoId)
       const movs = db.prepare('SELECT * FROM caixa_movimentacoes WHERE sessao_id = ?').all(sessaoId)
-      const totalVendas = movs.filter(m => m.tipo === 'venda').reduce((a, b) => a + b.valor, 0)
+      // 'venda' (mesa) + 'venda_delivery'. Antes so 'venda' entrava, o que fazia
+      // este total divergir das colunas total_* da sessao, que somam as duas.
+      const ehVenda = (m) => m.tipo === 'venda' || m.tipo === 'venda_delivery'
+      const totalVendas = movs.filter(ehVenda).reduce((a, b) => a + b.valor, 0)
       return { sessao, movimentacoes: movs, totalVendas }
     },
   },
