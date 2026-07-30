@@ -11,8 +11,9 @@ Legenda de confiança:
 
 | Item | Estado |
 |---|---|
-| 1.1 RLS liberado para `anon` | ❌ **aberto** — exige o rollout da fase 3 |
-| 1.2 Chaves de seed adivinháveis | ❌ **aberto** — escrita em produção, aguarda decisão |
+| 1.1 RLS — `licencas` | ⚠️ **parcial** — revogação em massa e PII fechadas; `SELECT chave` continua aberto |
+| 1.1 RLS — outras 10 tabelas | ❌ **aberto** — `ALL USING(true) WITH CHECK(true)`; exige o rollout da fase 3 |
+| 1.2 Chaves de seed adivinháveis | ✅ 99 revogadas em 30/07 |
 | 1.3 Licença forjável no SQLite local | ❌ **aberto** — parte da fase 3 (item 4 do plano) |
 | 1.4 DevTools em produção | ✅ corrigido |
 | 2.1 Venda de mesa não vira pedido | ✅ corrigido (com o `dashboard()` na mesma mudança) |
@@ -36,11 +37,18 @@ fallback. Se usar, lojas novas ficam sem como descobrir o código.
 
 ## 1. Receita e anti-pirataria
 
-### 1.1 RLS liberado para `anon` em todas as 11 tabelas — **[V]**
+### 1.1 RLS liberado para `anon` em todas as 11 tabelas — **[V]** — ⚠️ parcial
 
-Todas as tabelas de `public` têm uma política `anon_all_*` com
+Todas as tabelas de `public` tinham uma política `anon_all_*` com
 `USING (true) WITH CHECK (true)` para o role `anon`. Confirmado por
 `pg_policies` e pelo linter do Supabase (11 avisos `rls_policy_always_true`).
+
+**`licencas` já foi endurecida** (migração `endurecer_rls_licencas`, 30/07):
+`UPDATE` só aceita a transição legítima (não-usada/revogada → usada), o que
+fecha o exploit de revogar em massa; `email_cliente`/`telefone` saíram do
+`GRANT` de colunas. `SELECT` de `chave`/`nome_cliente` continua aberto — não
+dá pra restringir mais sem autenticação (ver `fase-3-fechar-o-supabase.md`).
+As outras 10 tabelas abaixo continuam com a política original.
 
 A chave anon está hardcoded em quatro pontos do código
 ([db.js:21](../electron/database/db.js), [supabaseSync.js:8](../electron/supabaseSync.js),
@@ -56,14 +64,25 @@ Já documentado em [fase-3-fechar-o-supabase.md](fase-3-fechar-o-supabase.md).
 **O bloqueio declarado naquele doc — "o MCP não enxerga este projeto" — não é mais
 verdade**: o projeto `xckystaizmgubayuwtsx` está acessível. O plano pode começar.
 
-### 1.2 Lote de 100 chaves de teste adivinháveis em produção — **[V]**
+### 1.2 Lote de 100 chaves de teste adivinháveis em produção — **[V]** — ✅ resolvido
 
 Inseridas numa única transação em 2026-05-13 20:32:02. 99 seguem o padrão
 alternado letra-dígito (`TAPF-A1B2-C3D4-E5F6`, `TAPF-A3B4-C5D6-E7F8`, …) e a
 centésima é `TAPF-TEST-0001-2026`. Nenhuma tem `pedido_ml` — nenhuma veio de venda.
 
-Uma delas (`TAPF-A1B2-C3D4-E5F6`) foi entregue a um cliente em 30/07/2026 como
-paliativo. As demais continuam ativas e utilizáveis.
+**Correção:** confirmado com o dono do produto que `TAPF-A1B2-C3D4-E5F6` nunca
+foi enviada a nenhum cliente por fora do banco (a suspeita inicial, registrada
+aqui antes, estava errada — ela seguia `status='ativa'`, sem `machine_id`,
+nunca usada). As 99 chaves nunca ativadas foram revogadas em 30/07/2026 às
+22:34. Preservada `TAPF-TEST-0001-2026`, a única do lote com `status='usada'`
+e `machine_id` preenchido — alguém depende dela hoje; revogar derrubaria essa
+instalação sem aviso.
+
+O caso do cliente real cujo pedido tinha ficado com chave de 15 caracteres
+(`TPF-SZ1N-GP6A-D3FN`, pedido_ml `2000017607418020`) foi resolvido à parte:
+essa chave está `revogada` e marcada `pedido_ml=...-SUBSTITUIDA`, e existe uma
+chave nova `TAPF-MKLX-UG18-VCY9`, já `usada`, com `machine_id` — o cliente
+ativou com sucesso.
 
 ### 1.3 O portão de receita é uma linha de SQLite sem proteção — **[I]**
 
@@ -211,12 +230,17 @@ O cache `donoDaComanda` ([supabaseSync.js:506](../electron/supabaseSync.js)) é 
 
 ## Ordem sugerida
 
-1. **Remover `openDevTools()` e o `executeJavaScript` de diagnóstico** — uma linha,
-   entra na próxima build, corta o vetor mais fácil de adulteração.
-2. **Revogar as 99 chaves de seed** (preservando a que foi entregue ao cliente).
-3. **Executar a fase 3** (Edge Functions + JWT + RLS real). O bloqueio de acesso
-   já não existe. É o que separa o produto de "qualquer um revoga todas as licenças".
-4. **Corrigir 2.1 e `dashboard()` na mesma mudança** — nunca uma sem a outra.
-5. Trocar `codigo_garcom` padrão por sorteio e forçar troca no primeiro acesso.
+1. ✅ **Remover `openDevTools()` e o `executeJavaScript` de diagnóstico** — feito
+   (commit `e52ab3a3`). Ainda não publicado em release — combinado esperar.
+2. ✅ **Revogar as 99 chaves de seed** — feito em 30/07 22:34, preservando
+   `TAPF-TEST-0001-2026` (em uso).
+3. **Executar a fase 3** (Edge Functions + JWT + RLS real) — **combinado
+   aguardar**. `licencas` já recebeu um endurecimento parcial que não depende
+   dessa etapa (ver 1.1).
+4. ✅ **Corrigir 2.1 e `dashboard()` na mesma mudança** — feito e verificado
+   com teste contra cópia do banco de produção (commit `e52ab3a3`).
+5. ⚠️ Trocar `codigo_garcom` padrão por sorteio — feito, **falta validar
+   contra o app do garçom** (nenhuma sessão teve os dois repos abertos ao
+   mesmo tempo). Forçar troca no primeiro acesso continua pendente.
 6. Decidir o que "Controle de Estoque" promete e implementar a baixa automática,
-   ou ajustar a comunicação do produto.
+   ou ajustar a comunicação do produto — **combinado aguardar**, decisão de produto.
