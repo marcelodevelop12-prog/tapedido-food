@@ -1,7 +1,10 @@
 # Fase 3 — Fechar o acesso ao Supabase
 
-> Status: **não aplicado**. Depende de acesso admin ao projeto
-> `xckystaizmgubayuwtsx` e de uma nova versão do PDV distribuída aos clientes.
+> Status: **parcialmente aplicado em 30/07/2026**. `licencas` foi endurecida
+> (ver "O que já foi corrigido" abaixo) assim que o acesso admin ao projeto
+> ficou disponível. As demais 10 tabelas continuam com RLS aberto — ainda
+> dependem da nova versão do PDV/garçom distribuída aos clientes, conforme
+> o desenho abaixo.
 
 ## O problema
 
@@ -28,7 +31,46 @@ PATCH  licencas  -> HTTP 204
 
 Não há isolamento por loja: cada `SELECT` devolve dados de todas as lojas.
 
-## Por que só ligar o RLS não resolve
+## O que já foi corrigido (30/07/2026)
+
+`licencas` tinha o mesmo problema das outras: uma política `anon_all_licencas`
+com `USING (true) WITH CHECK (true)` para `ALL`. Diferente das outras tabelas,
+essa deu para endurecer **sem esperar nova versão do cliente**, porque o único
+código que toca `licencas` via chave anon (`electron/database/db.js`,
+`ativar()` e `verificarPeriodicamente()`) faz sempre a mesma coisa: `SELECT`
+por chave exata, e um único `UPDATE` que so roda quando o proprio cliente ja
+confirmou que o status atual nao e `usada` nem `revogada`. Nunca faz `INSERT`
+nem `DELETE` — isso e feito só pela Edge Function `gerar-licenca` (service
+role, ignora RLS).
+
+Migração aplicada (`endurecer_rls_licencas`):
+
+- `SELECT` continua liberado para `anon` — não dá para restringir mais sem
+  autenticação (ver seção abaixo), mas as colunas `email_cliente` e
+  `telefone` foram retiradas do `GRANT`, então uma consulta anônima não
+  vaza mais esse PII, só `chave/status/machine_id/nome_cliente/ativada_em`.
+- `UPDATE` só é permitido quando `status <> 'usada' AND status <> 'revogada'`
+  (linha ainda não ativada), e o `WITH CHECK` só aceita gravar
+  `status = 'usada'`. Isso fecha o pior exploit — **revogar em massa a
+  licença de todo cliente pagante com um único PATCH** — porque `anon` nunca
+  mais consegue escrever `status = 'revogada'`, nem mexer numa linha já
+  ativada.
+- `INSERT`/`DELETE` de `anon`: negados por padrão (sem política = deny).
+
+Verificado batendo direto na API REST com a chave anon: `SELECT` de coluna
+fora do grant dá `permission denied`; `PATCH` tentando `status=revogada` em
+massa dá `42501 new row violates row-level security policy` e não altera
+nenhuma linha; ativação legítima (`UPDATE` para `status='usada'`) continua
+funcionando; uma segunda tentativa de ativar a mesma chave já usada é
+barrada pela política, sem erro visível e sem alterar a linha.
+
+**Risco residual, sem solução até a Fase 3 completa:** `SELECT` continua
+aberto para todas as linhas, então ainda dá para listar toda `chave` +
+`nome_cliente` de todo mundo e tentar ativar uma chave antes do cliente
+legítimo. RLS não tem como distinguir "buscar pela própria chave" de
+"listar tudo" sem um JWT — é exatamente o problema descrito abaixo.
+
+## Por que só ligar o RLS não resolve (nas outras 10 tabelas)
 
 Os apps não autenticam no Supabase. Usam a chave anon, que é anônima por
 definição: o servidor não tem como saber qual loja está do outro lado.
@@ -96,9 +138,15 @@ porta**, senão o PDV instalado para de ativar licença e o garçom para de entr
 5. Depois disso: trocar o "sem internet nunca bloqueia" por um período de
    tolerância (ex.: 7 dias), fechando a brecha de ficar offline para sempre.
 
-## O que falta para começar
+## O que falta para continuar
 
-- Acesso admin ao projeto `xckystaizmgubayuwtsx`. O MCP do Supabase disponível
-  aqui só enxerga a organização `bsekhxsgmnqiupfamghu`, que não contém este
-  projeto.
-- Uma janela combinada para o passo 4, com plano de rollback pronto.
+- Acesso admin ao projeto ficou disponível em 30/07/2026 (o MCP do Supabase
+  passou a enxergar `xckystaizmgubayuwtsx`, na org `pwaoipkjynezdcgphytj`).
+  `licencas` já foi endurecida (acima). As outras 10 tabelas continuam
+  abertas porque endurecê-las HOJE quebraria todo PDV e app do garçom já
+  instalado — eles não autenticam, dependem do acesso irrestrito.
+- Falta escrever e publicar as Edge Functions `entrar`/`licenca-*` do desenho
+  abaixo, atualizar os dois clientes para usá-las, publicar uma nova versão e
+  esperar adoção antes de ligar RLS nas demais tabelas.
+- Uma janela combinada para o passo 4 da ordem de aplicação, com plano de
+  rollback pronto.
