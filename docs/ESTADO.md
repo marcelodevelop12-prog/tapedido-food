@@ -62,7 +62,42 @@ CommonJS (config de postcss inline no `vitest.config.js`).
 19 testes em 4 arquivos, todos verdes. Congelam o comportamento atual de
 pedido, caixa, dashboard e relatórios.
 
+### Task 5 — App do garçom adota o JWT (31/07, parcial)
+
+Código pronto e compilando, commitado em `6f0cb89` no repo do garçom. **Teste
+end-to-end e publicação pendentes** — ver bloqueio abaixo.
+
+O que mudou lá: `src/lib/sessao.js` novo, `accessToken` no cliente Supabase com
+fallback para a chave anon, e a validação migrou da tela de código da loja para
+a de login (a Edge Function recebe os dois códigos juntos). Isso também fechou
+uma brecha: a tela antiga respondia se um código de loja existia, o que
+permitia varrer códigos válidos.
+
+## 🚧 BLOQUEIO ATIVO — `JWT_SECRET` não configurado
+
+A Edge Function `entrar` responde **503 em toda chamada**, desde sempre —
+confirmado nos logs, inclusive nas tentativas de 30/07 23:41. Nenhum token foi
+emitido até hoje.
+
+Causa, direto do código
+(`supabase/functions/entrar/index.ts:224`): o secret `JWT_SECRET` (ou
+`TAPEDIDO_JWT_SECRET`) não existe nos secrets da função, e ela devolve 503 de
+propósito nesse caso.
+
+**O valor precisa ser o JWT Secret do próprio projeto Supabase**, não um valor
+aleatório. A função assina em HS256 e o Postgres verifica a assinatura com o
+segredo do projeto; com um segredo diferente, os tokens seriam emitidos mas
+`auth.jwt()` não os validaria — e, depois da virada da RLS, os dois apps
+parariam de ler qualquer coisa.
+
+Enquanto isso não for resolvido, **nada está quebrado**: sem token, os dois
+apps usam a chave anon e funcionam como sempre. Mas as Tasks 5 e 6 não podem
+fechar, e a janela de virar a RLS sem base instalada fecha em 01/08.
+
 ## Próximo
 
-Tasks 5 e 6: app do garçom adota o JWT, depois a virada da RLS. Feito isso, o
-plano das 8 features do anúncio.
+1. Configurar `JWT_SECRET` nos secrets da função `entrar` (ação manual no
+   painel do Supabase — é credencial).
+2. Retomar a Task 5 a partir do Step 7 (teste dos 4 cenários) e publicar.
+3. Task 6: virada da RLS.
+4. Depois, o plano das 8 features do anúncio.
