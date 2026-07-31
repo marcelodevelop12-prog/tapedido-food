@@ -562,6 +562,86 @@ function proximoNumeroPedido() {
   return (row?.max || 0) + 1
 }
 
+// ── Estoque na venda ───────────────────────────────────────────────────────
+const UUID_MENU = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Devolve o id local do produto.
+ *
+ * O item que vem do app do garcom traz o UUID do Supabase, nao o inteiro local
+ * — `menu_items.supabase_id` e a ponte. Sem esta traducao a venda de salao
+ * feita pelo garcom nunca baixaria estoque, e o motivo seria invisivel: o
+ * pedido entra normal, so o estoque nao mexe.
+ */
+function resolverMenuItemId(valor) {
+  if (valor === null || valor === undefined || valor === '') return null
+  if (typeof valor === 'number') return Number.isFinite(valor) ? valor : null
+
+  const texto = String(valor).trim()
+  if (/^\d+$/.test(texto)) return Number(texto)
+  if (!UUID_MENU.test(texto)) return null
+
+  const local = db.prepare('SELECT id FROM menu_items WHERE supabase_id = ?').get(texto)
+  return local?.id ?? null
+}
+
+function custoAtualDoProduto(menuItemId) {
+  if (!menuItemId) return 0
+  const p = db.prepare('SELECT custo_unitario FROM menu_items WHERE id = ?').get(menuItemId)
+  return p?.custo_unitario ?? 0
+}
+
+/**
+ * Desconta do estoque os itens de um pedido. Idempotente por pedido: a segunda
+ * chamada nao mexe em nada.
+ *
+ * A garantia vem do indice unico parcial `idx_estoque_ref` sobre
+ * (referencia_tipo, referencia_id, menu_item_id) — e do banco, nao daqui.
+ * Heuristica em codigo nao sobrevive a dois processos gravando ao mesmo tempo,
+ * que e exatamente o caso quando o eco do realtime chega junto com o PDV.
+ *
+ * Precisa rodar dentro da transacao de quem chama.
+ */
+function baixarEstoqueDoPedido(pedidoId, itens) {
+  // Uma linha por produto. Duas linhas do mesmo produto no pedido (observacoes
+  // diferentes) sao a mesma baixa; sem somar antes, o indice unico recusaria a
+  // segunda em silencio e o estoque ficaria alto.
+  const porProduto = new Map()
+  for (const item of itens) {
+    if (!item.menuItemId) continue
+    const qtd = Number(item.quantidade) || 0
+    if (qtd <= 0) continue
+    porProduto.set(item.menuItemId, (porProduto.get(item.menuItemId) || 0) + qtd)
+  }
+  if (porProduto.size === 0) return
+
+  const lerSaldo = db.prepare('SELECT estoque_atual FROM menu_items WHERE id = ?')
+  const gravarSaldo = db.prepare('UPDATE menu_items SET estoque_atual = ? WHERE id = ?')
+  const registrar = db.prepare(`
+    INSERT OR IGNORE INTO estoque_movimentacoes
+      (menu_item_id, tipo, quantidade, custo_unitario, motivo, pedido_id,
+       saldo_anterior, saldo_posterior, referencia_tipo, referencia_id, criado_em)
+    VALUES (?, 'saida', ?, ?, ?, ?, ?, ?, 'pedido', ?, ?)
+  `)
+
+  for (const [menuItemId, quantidade] of porProduto) {
+    const saldoAnterior = lerSaldo.get(menuItemId)?.estoque_atual ?? 0
+    // Mesmo criterio de `estoque.movimentar`: nao deixa o saldo negativo. Quem
+    // vende sem ter cadastrado entrada veria "-12 un" e acharia que e bug.
+    const saldoPosterior = Math.max(0, saldoAnterior - quantidade)
+
+    const r = registrar.run(
+      menuItemId, quantidade, custoAtualDoProduto(menuItemId),
+      `Venda do pedido #${pedidoId}`, pedidoId,
+      saldoAnterior, saldoPosterior, String(pedidoId), agora()
+    )
+
+    // changes === 0 significa que o indice unico recusou: este pedido ja baixou
+    // este produto. Mexer no saldo aqui seria descontar duas vezes.
+    if (r.changes > 0) gravarSaldo.run(saldoPosterior, menuItemId)
+  }
+}
+
 // ── Módulos ────────────────────────────────────────────────────────────────
 const dbModule = {
   // ── Licença ──────────────────────────────────────────────────────────────
@@ -1117,17 +1197,24 @@ const dbModule = {
       }
 
       const itens = dados.itens || []
-      const itensNorm = itens.map((i) => ({
-        menuItemId: i.menuItemId ?? i.menu_item_id ?? null,
-        nomeItem: i.nomeItem ?? i.nome_item ?? '',
-        quantidade: i.quantidade ?? 0,
-        precoUnitario: i.precoUnitario ?? i.preco_unitario ?? 0,
-        subtotal: i.subtotal ?? ((i.precoUnitario ?? i.preco_unitario ?? 0) * (i.quantidade ?? 0)),
-        sabor2: i.sabor2 ?? i.sabor_2 ?? null,
-        precoSabor2: i.precoSabor2 ?? i.preco_sabor_2 ?? null,
-        adicionaisEscolhidos: i.adicionaisEscolhidos ?? i.adicionais_escolhidos ?? [],
-        observacao: i.observacao ?? '',
-      }))
+      const itensNorm = itens.map((i) => {
+        const menuItemId = resolverMenuItemId(i.menuItemId ?? i.menu_item_id)
+        return {
+          menuItemId,
+          nomeItem: i.nomeItem ?? i.nome_item ?? '',
+          quantidade: i.quantidade ?? 0,
+          precoUnitario: i.precoUnitario ?? i.preco_unitario ?? 0,
+          subtotal: i.subtotal ?? ((i.precoUnitario ?? i.preco_unitario ?? 0) * (i.quantidade ?? 0)),
+          sabor2: i.sabor2 ?? i.sabor_2 ?? null,
+          precoSabor2: i.precoSabor2 ?? i.preco_sabor_2 ?? null,
+          adicionaisEscolhidos: i.adicionaisEscolhidos ?? i.adicionais_escolhidos ?? [],
+          observacao: i.observacao ?? '',
+          // Congelado agora, de proposito. Se o relatorio de lucro lesse o custo
+          // atual do produto, uma mudanca de preco do fornecedor reescreveria o
+          // lucro de meses ja fechados — e nao ha como recuperar o valor antigo.
+          custoUnitario: custoAtualDoProduto(menuItemId),
+        }
+      })
 
       // Sem subtotal explicito, deriva dos itens — a coluna e NOT NULL.
       const subtotal = campo('subtotal') ?? itensNorm.reduce((a, i) => a + (i.subtotal || 0), 0)
@@ -1162,14 +1249,18 @@ const dbModule = {
         const pedidoId = result.lastInsertRowid
         const stmtItem = db.prepare(`
           INSERT INTO itens_pedido (pedido_id, menu_item_id, nome_item, quantidade, preco_unitario,
-            subtotal, sabor_2, preco_sabor_2, adicionais_escolhidos, observacao)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            subtotal, sabor_2, preco_sabor_2, adicionais_escolhidos, observacao, custo_unitario)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         for (const item of itensNorm) {
           stmtItem.run(pedidoId, item.menuItemId, item.nomeItem, item.quantidade,
             item.precoUnitario, item.subtotal, item.sabor2, item.precoSabor2,
-            JSON.stringify(item.adicionaisEscolhidos), item.observacao)
+            JSON.stringify(item.adicionaisEscolhidos), item.observacao, item.custoUnitario)
         }
+
+        // Dentro da mesma transacao do pedido: ou a venda e a baixa entram
+        // juntas, ou nenhuma das duas entra.
+        baixarEstoqueDoPedido(pedidoId, itensNorm)
         return pedidoId
       })
 

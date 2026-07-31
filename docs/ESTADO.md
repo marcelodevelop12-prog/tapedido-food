@@ -31,6 +31,7 @@ aqui fica o que muda.
 | 31/07 | Testes só nos caminhos de dinheiro e estoque | Pega o que custa dinheiro sem virar projeto de testes |
 | 31/07 | `db.js` fatiado por domínio junto de cada feature | Evita refatoração grande sem testes |
 | 31/07 | Trabalhar direto na `main` | Projeto de um dev só, prazo de um dia; cada task commita separada e reverte sozinha |
+| 31/07 | Não publicar nada por ora; features primeiro | Publicar em duas etapas dobraria o risco na véspera; sai tudo numa release só |
 
 ## Concluído
 
@@ -131,6 +132,34 @@ ponta a ponta:
 O teste do PostgREST era o que importava: prova que o segredo cadastrado é
 mesmo o do projeto. Com um valor aleatório, o token seria emitido normalmente
 e só falharia depois da virada da RLS — quando já seria tarde.
+
+### Feature 4 — Baixa automática de estoque (31/07)
+
+`pedidos.criar` passou a descontar o estoque dentro da **mesma transação** do
+pedido: ou os dois entram, ou nenhum entra. É o único caminho que cria pedido
+no sistema, então não há venda que escape.
+
+Três coisas que o caminho exigiu e não eram óbvias:
+
+- **A venda de mesa não mandava o id do produto.** `Mesas.jsx` montava os itens
+  só com nome, quantidade e preço. Sem o id, a baixa não teria como acontecer —
+  e o pedido entraria normal, sem nada indicando o motivo.
+- **O item vindo do garçom traz UUID do Supabase, não o id local.**
+  `resolverMenuItemId` traduz pela coluna `menu_items.supabase_id`.
+- **Linhas repetidas do mesmo produto viram uma baixa só.** Dois X-Burguer com
+  observações diferentes são duas linhas; sem somar antes, o índice único
+  recusaria a segunda em silêncio e o estoque ficaria alto.
+
+A idempotência é do banco (`idx_estoque_ref`), não de heurística em código —
+`INSERT OR IGNORE` e o saldo só muda se a linha entrou. Isso é o que segura o
+eco do realtime chegando junto com o PDV.
+
+Junto veio `itens_pedido.custo_unitario`, congelado no momento da venda. Sem
+ele, o relatório de custo × lucro leria o custo atual e uma alta do fornecedor
+reescreveria o lucro de meses já fechados — sem volta.
+
+Efeito colateral bom: o alerta de estoque baixo do Dashboard já existia mas era
+letra morta, porque o estoque só mexia por lançamento manual. Agora ele vale.
 
 ## 🚧 BLOQUEIO ATIVO — a virada da RLS depende de release publicada
 

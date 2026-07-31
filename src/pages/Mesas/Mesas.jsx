@@ -165,6 +165,11 @@ export default function Mesas() {
         status: 'entregue',
         mesa: mesa.nome || `Mesa ${mesa.numero}`,
         itens: itensParaPedido.map(i => ({
+          // Sem o id do produto a venda entra no historico mas nao baixa
+          // estoque nem entra no relatorio de lucro. Vem inteiro quando a
+          // comanda e local e como UUID do Supabase quando quem lancou foi o
+          // garcom; `pedidos.criar` traduz os dois.
+          menuItemId: i.menu_item_id ?? i.menuItemId ?? null,
           nomeItem: i.nome_item,
           quantidade: i.quantidade,
           precoUnitario: i.preco_unitario,
