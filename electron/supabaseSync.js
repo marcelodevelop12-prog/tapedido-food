@@ -4,8 +4,10 @@ const path = require('path')
 const crypto = require('crypto')
 const ws = require('ws')
 
-const SUPABASE_URL = 'https://xckystaizmgubayuwtsx.supabase.co'
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhja3lzdGFpem1ndWJheXV3dHN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2OTMyMTAsImV4cCI6MjA5NDI2OTIxMH0.kTXm_Vk9cF8shEcUZxOch50eaV9AXNgsjaElGl_Ctqk'
+const sessao = require('./sessaoSupabase')
+
+const SUPABASE_URL = sessao.SUPABASE_URL
+const SUPABASE_ANON_KEY = sessao.SUPABASE_ANON_KEY
 const BUCKET = 'product-images'
 
 let _supabase = null
@@ -13,6 +15,11 @@ let _supabase = null
 function sb() {
   if (!_supabase) {
     _supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      // Usa o JWT da Edge Function `entrar` (carrega a claim loja_id) quando
+      // existe; senão devolve a chave anon e nada muda. O supabase-js chama
+      // isso tanto no REST quanto no Realtime — é o que garante que os canais
+      // também vão autenticados, e não só as consultas.
+      accessToken: async () => sessao.tokenAtual(),
       realtime: {
         transport: ws,
       },
@@ -562,10 +569,15 @@ function iniciarRealtime(lojaId, mainWindow, db) {
       event: 'INSERT',
       schema: 'public',
       table: 'comanda_itens',
+      // Filtro no servidor. Antes comanda_itens nao tinha loja_id e este canal
+      // recebia os itens de TODAS as lojas — dado de um cliente trafegando para
+      // a maquina de outro. A coluna e preenchida por trigger no banco, sempre
+      // derivada da comanda, entao nao da para forjar pelo payload.
+      filter: `loja_id=eq.${lojaId}`,
     }, async (payload) => {
-      // comanda_itens nao tem loja_id, entao nao da para filtrar no servidor:
-      // este canal recebe itens de TODAS as lojas. Confirma o dono pela
-      // comanda antes de repassar, senao o PDV exibe item de outro cliente.
+      // Segunda barreira, de proposito: se o filtro acima for removido ou
+      // configurado errado um dia, o vazamento nao volta silenciosamente.
+      // O resultado fica em cache, entao custa uma consulta por comanda.
       if (!(await itemPertenceALoja(payload.new.comanda_id, lojaId))) return
       console.log('[Realtime] comanda_itens INSERT:', payload.new)
       if (mainWindow && !mainWindow.isDestroyed()) {

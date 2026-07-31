@@ -11,10 +11,10 @@ Legenda de confiança:
 
 | Item | Estado |
 |---|---|
-| 1.1 RLS — `licencas` | ⚠️ **parcial** — revogação em massa e PII fechadas; `SELECT chave` continua aberto |
+| 1.1 RLS — `licencas` | ⚠️ **parcial** — revogação em massa e PII fechadas. `SELECT chave` ainda aberto, mas as Edge Functions que permitem fechá-lo já existem; falta o rollout do cliente |
 | 1.1 RLS — outras 10 tabelas | ❌ **aberto** — `ALL USING(true) WITH CHECK(true)`; exige o rollout da fase 3 |
 | 1.2 Chaves de seed adivinháveis | ✅ 99 revogadas em 30/07 |
-| 1.3 Licença forjável no SQLite local | ❌ **aberto** — parte da fase 3 (item 4 do plano) |
+| 1.3 Licença forjável no SQLite local | ✅ corrigido — `licenca-verificar` distingue "servidor disse que não existe" de "sem internet"; o primeiro caso agora bloqueia |
 | 1.4 DevTools em produção | ✅ corrigido |
 | 2.1 Venda de mesa não vira pedido | ✅ corrigido (com o `dashboard()` na mesma mudança) |
 | 2.2 Estoque não baixa na venda | ❌ **aberto** — decisão de produto |
@@ -23,7 +23,7 @@ Legenda de confiança:
 | 2.5 `resumo().totalVendas` sem delivery | ✅ corrigido |
 | 3.1 `codigo_garcom` fixo `1234` | ⚠️ corrigido — **validar contra o app do garçom** |
 | 3.2 `codigo_loja` com `Math.random()` | ✅ corrigido |
-| 3.3 Realtime sem filtro de loja | ⚠️ parcial — cache limitado; filtro exige `loja_id` em `comanda_itens` (fase 3) |
+| 3.3 Realtime sem filtro de loja | ✅ corrigido — `loja_id` em `comanda_itens` preenchido por trigger (não confia no payload) + filtro no servidor; vazamento comprovadamente fechado em teste end-to-end |
 | 4 Transações e higiene | ✅ corrigido |
 
 ⚠️ **3.1 precisa de validação sua.** O `codigo_garcom` da tabela `configuracoes`

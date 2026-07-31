@@ -1,10 +1,56 @@
 # Fase 3 — Fechar o acesso ao Supabase
 
-> Status: **parcialmente aplicado em 30/07/2026**. `licencas` foi endurecida
-> (ver "O que já foi corrigido" abaixo) assim que o acesso admin ao projeto
-> ficou disponível. As demais 10 tabelas continuam com RLS aberto — ainda
-> dependem da nova versão do PDV/garçom distribuída aos clientes, conforme
-> o desenho abaixo.
+> Status: **passo 1 e metade do passo 2 feitos em 30/07/2026**. `licencas` foi
+> endurecida, a Edge Function `entrar` está publicada e o **PDV já usa o token**
+> (com fallback). Falta o app do garçom (spec entregue em
+> `spec-app-garcom-jwt.md`) e o segredo de assinatura no servidor. As 10 tabelas
+> de dados continuam com RLS aberto de propósito — fechar antes de os clientes
+> atualizarem derruba todo mundo.
+
+## Onde está cada peça (30/07/2026)
+
+| Peça | Estado |
+|------|--------|
+| Edge Function `entrar` | publicada, v1, `verify_jwt: true` |
+| `licencas.loja_id` (vínculo licença ↔ loja) | criado; escrita só por service role |
+| PDV usando o token | feito — `electron/sessaoSupabase.js` |
+| Realtime do renderer usando o token | feito — `src/lib/supabaseClient.js` via IPC |
+| **`JWT_SECRET` nos secrets da função** | **PENDENTE — bloqueia tudo** |
+| App do garçom | pendente (outro repositório; ver `spec-app-garcom-jwt.md`) |
+| Políticas de RLS das 10 tabelas | **não** aplicadas — só depois da adoção |
+
+### Passo manual pendente: o segredo de assinatura
+
+A `entrar` assina o JWT com o segredo do próprio projeto (HS256, o mesmo que
+assina a chave anon) — é isso que faz o PostgREST e o Realtime aceitarem o
+token. Esse valor não é exposto por API; tem que ser cadastrado à mão, uma vez:
+
+1. Supabase → **Project Settings → API → JWT Settings → JWT Secret** → copiar.
+2. **Edge Functions → Secrets** → novo secret `JWT_SECRET` com esse valor.
+   (Se o painel recusar o nome, use `TAPEDIDO_JWT_SECRET` — a função aceita os
+   dois.)
+
+Enquanto não for feito, a `entrar` responde `503` e **os apps continuam na chave
+anon** — ou seja, tudo funciona como hoje, nada quebra. É um estado seguro para
+ficar parado.
+
+### Vínculo licença ↔ loja
+
+`licencas` não tinha `loja_id`, então o PDV não tinha como provar de que loja
+ele é. A coluna foi criada e o vínculo é **TOFU**: fica nulo até o primeiro
+`entrar` bem-sucedido, ali gruda na loja informada e depois disso o servidor
+sempre devolve *essa* loja, ignorando o que o cliente mandar.
+
+Efeitos colaterais desejados: reinstalar o PDV recupera a loja original (o
+cliente adota o `loja_id` que voltar na resposta) e pedir token da loja de outro
+cliente deixa de ser possível.
+
+A licença do cliente (`TAPF-MKLX-UG18-VCY9`) foi vinculada à mão à loja
+`ed3a1bc2…`, sem depender do TOFU — nome e horário de criação batiam.
+
+Cuidado: o `GRANT` de `INSERT`/`UPDATE` em `licencas` era de **tabela**, então a
+coluna nova nasceu escrevível por `anon`. Isso reabriria o buraco (gravar o
+`loja_id` de outro durante a ativação). Já foi revogado por coluna.
 
 ## O problema
 
@@ -140,13 +186,44 @@ porta**, senão o PDV instalado para de ativar licença e o garçom para de entr
 
 ## O que falta para continuar
 
-- Acesso admin ao projeto ficou disponível em 30/07/2026 (o MCP do Supabase
-  passou a enxergar `xckystaizmgubayuwtsx`, na org `pwaoipkjynezdcgphytj`).
-  `licencas` já foi endurecida (acima). As outras 10 tabelas continuam
-  abertas porque endurecê-las HOJE quebraria todo PDV e app do garçom já
-  instalado — eles não autenticam, dependem do acesso irrestrito.
-- Falta escrever e publicar as Edge Functions `entrar`/`licenca-*` do desenho
-  abaixo, atualizar os dois clientes para usá-las, publicar uma nova versão e
-  esperar adoção antes de ligar RLS nas demais tabelas.
-- Uma janela combinada para o passo 4 da ordem de aplicação, com plano de
-  rollback pronto.
+Em ordem:
+
+1. **Cadastrar o `JWT_SECRET`** (passo manual acima). Sem ele a `entrar`
+   responde 503 e o resto não sai do lugar.
+2. **Testar a `entrar` de ponta a ponta** logo depois — hoje só foi possível
+   testar os caminhos de recusa, porque sem segredo ela não assina nada.
+3. **App do garçom** adotar o token (`spec-app-garcom-jwt.md`). É outro
+   repositório; depende do agente que cuida dele.
+4. **Publicar** PDV e garçom e esperar adoção. Dá para acompanhar por
+   `licencas.ultima_verificacao` e, melhor ainda, por `licencas.loja_id` deixar
+   de ser nulo — só a `entrar` preenche essa coluna, então cada linha
+   preenchida é um PDV que já está usando o token.
+5. **Só então** trocar as políticas das 10 tabelas. É feito no servidor, **não
+   precisa de release novo**. Formato:
+
+   ```sql
+   -- para cada tabela com loja_id
+   drop policy if exists "anon_all_<tabela>" on <tabela>;
+   create policy "so a propria loja" on <tabela> for all to anon
+     using      ((auth.jwt() ->> 'loja_id')::uuid = loja_id)
+     with check ((auth.jwt() ->> 'loja_id')::uuid = loja_id);
+   ```
+
+   `to anon` de propósito: o token emitido pela `entrar` carrega
+   `role: "anon"`, então continua usando os mesmos GRANTs de hoje. Quem usar a
+   chave anon crua não tem a claim e é negado. Rollback é recriar a política
+   antiga com `using (true)` — uma instrução, efeito imediato.
+
+   `comanda_itens` já tem `loja_id` (preenchido por trigger `security definer` a
+   partir da comanda), então entra na mesma regra.
+
+Riscos ainda em aberto:
+
+- **Sem limite de tentativas na `entrar`.** `codigo_loja` tem 6 caracteres de um
+  alfabeto de 32; `codigo_garcom` tem 4 dígitos. Quem já souber o código de uma
+  loja varre os 10 000 códigos de garçom sem esforço. Precisa de throttling no
+  servidor antes de considerar a fase 3 fechada.
+- **`SELECT` de `licencas` continua aberto para `anon`** até o passo 5 (item 4
+  do desenho abaixo: tirar `licencas` do alcance de `anon` de vez, já que
+  ativação e verificação hoje passam por Edge Function).
+- Uma janela combinada para o passo 5, com o rollback acima à mão.

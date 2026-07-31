@@ -13,6 +13,13 @@ contextBridge.exposeInMainWorld('api', {
     info: () => invoke('licenca:info'),
   },
 
+  // Sessão do Supabase — o renderer assina canais de realtime direto (ver
+  // src/lib/supabaseClient.js) e precisa do mesmo token que o processo main.
+  // Só leitura: quem renova é o main.
+  sessao: {
+    token: () => invoke('sessao:token'),
+  },
+
   // Loja
   loja: {
     get: () => invoke('loja:get'),

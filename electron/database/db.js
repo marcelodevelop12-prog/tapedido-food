@@ -3,7 +3,7 @@ const { app, dialog } = require('electron')
 const crypto = require('crypto')
 const os = require('os')
 
-let Database, supabase, supabaseSync, ws
+let Database, supabase, supabaseSync, ws, sessaoSupabase
 
 try {
   Database = require('better-sqlite3')
@@ -16,22 +16,30 @@ try {
   const { createClient } = require('@supabase/supabase-js')
   ws = require('ws')
   supabaseSync = require('../supabaseSync')
+  sessaoSupabase = require('../sessaoSupabase')
 
-  const SUPABASE_URL = 'https://xckystaizmgubayuwtsx.supabase.co'
-  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhja3lzdGFpem1ndWJheXV3dHN4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2OTMyMTAsImV4cCI6MjA5NDI2OTIxMH0.kTXm_Vk9cF8shEcUZxOch50eaV9AXNgsjaElGl_Ctqk'
-
-  supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  supabase = createClient(sessaoSupabase.SUPABASE_URL, sessaoSupabase.SUPABASE_ANON_KEY, {
+    // Ver electron/sessaoSupabase.js: devolve o JWT com a claim loja_id quando
+    // existe, e a chave anon quando não — o fallback que permite publicar esta
+    // versão antes de fechar o RLS.
+    accessToken: async () => sessaoSupabase.tokenAtual(),
     global: { fetch: fetch },
     realtime: { transport: ws },
   })
 } catch (err) {
   console.error('Aviso: Supabase/supabaseSync falhou ao carregar:', err.message)
   supabaseSync = { fecharComandaSupabase: async () => {}, criarLoja: async () => null, sincronizarTodasMesas: async () => [], listarGarcons: async () => [], adicionarGarcom: async () => {}, deletarGarcom: async () => {}, verificarConexao: async () => false }
+  sessaoSupabase = { configurar: () => {}, tokenAtual: () => null, lojaDoToken: () => null, precisaRenovar: () => false, renovar: async () => ({ sucesso: false }), limpar: () => {} }
 }
 
 const userDataPath = app ? app.getPath('userData') : '.'
 const dbPath = path.join(userDataPath, 'tapedido.db')
 console.log('[db] dbPath:', dbPath)
+
+// Carrega o token salvo antes de qualquer chamada ao Supabase.
+try { sessaoSupabase.configurar(userDataPath) } catch (err) {
+  console.warn('[db] sessão do Supabase não carregou:', err.message)
+}
 
 let db
 try {
@@ -427,6 +435,64 @@ function variantesDeChave(valor) {
   return [...variantes]
 }
 
+// Chama uma Edge Function de licenca. Devolve o corpo da resposta, ou null
+// quando nao foi possivel falar com ela (rede caida, funcao fora do ar, 5xx).
+// null significa "nao sei" — o chamador cai no caminho antigo, consultando a
+// tabela direto. Esse fallback e o que permite publicar esta versao antes de
+// fechar o SELECT de `licencas` para anon, sem derrubar quem ja esta instalado.
+async function chamarEdgeLicenca(nome, corpo) {
+  try {
+    const { data, error } = await supabase.functions.invoke(nome, { body: corpo })
+    if (error) {
+      console.log(`[licenca] edge ${nome} indisponivel:`, error.message)
+      return null
+    }
+    return data || null
+  } catch (err) {
+    console.log(`[licenca] edge ${nome} excecao:`, err?.message || err)
+    return null
+  }
+}
+
+// Grava a licenca no SQLite local. `chaveCanonica` precisa ser exatamente a
+// grafia que esta no Supabase — verificarPeriodicamente() consulta por ela.
+function gravarLicencaLocal({ chaveCanonica, machineId, nomeCliente, email, verificadaEm }) {
+  db.prepare('DELETE FROM licenca').run()
+  db.prepare(`
+    INSERT INTO licenca (chave, machine_id, nome_cliente, email, ativada_em, modo_demo, ultima_verificacao)
+    VALUES (?, ?, ?, ?, ?, 0, ?)
+  `).run(chaveCanonica, machineId, nomeCliente || '', email || '', agora(), verificadaEm || agora())
+}
+
+// Cria a loja no Supabase depois da ativacao — em background, para nao segurar
+// a tela de ativacao esperando rede.
+function criarLojaEmBackground(nomeCliente) {
+  setImmediate(async () => {
+    try {
+      const jaTemLoja = db.prepare('SELECT supabase_loja_id FROM configuracoes LIMIT 1').get()
+      if (jaTemLoja?.supabase_loja_id) return // ja foi criada
+
+      const lojaLocal = db.prepare('SELECT nome FROM lojas LIMIT 1').get()
+      const nomeLoja = lojaLocal?.nome || nomeCliente || 'Minha Loja'
+      const resultado = await supabaseSync.criarLoja(db, nomeLoja)
+      if (!resultado) return
+
+      const cfg = db.prepare('SELECT id FROM configuracoes LIMIT 1').get()
+      if (cfg) {
+        db.prepare('UPDATE configuracoes SET supabase_loja_id = ?, codigo_loja = ? WHERE id = ?')
+          .run(resultado.lojaId, resultado.codigoLoja, cfg.id)
+      } else {
+        db.prepare('INSERT INTO configuracoes (supabase_loja_id, codigo_loja) VALUES (?, ?)')
+          .run(resultado.lojaId, resultado.codigoLoja)
+      }
+
+      // A loja acabou de existir: é o primeiro momento em que dá para pedir o
+      // token, e é aqui que a licença fica vinculada a ela no servidor.
+      await dbModule.licenca.renovarSessaoSupabase()
+    } catch {}
+  })
+}
+
 function proximoNumeroPedido() {
   const row = db.prepare('SELECT MAX(numero_pedido) as max FROM pedidos').get()
   return (row?.max || 0) + 1
@@ -450,7 +516,46 @@ const dbModule = {
       const row = db.prepare("SELECT * FROM licenca WHERE modo_demo = 0 LIMIT 1").get()
       if (!row) return
 
-      // Verifica no Supabase a cada abertura do app
+      const machineId = getMachineId()
+
+      // ── Caminho novo: Edge Function ─────────────────────────────────────
+      const viaEdge = await chamarEdgeLicenca('licenca-verificar', {
+        chave: row.chave,
+        machine_id: machineId,
+      })
+
+      if (viaEdge) {
+        // Hora do SERVIDOR. A tolerancia de dias offline vai se apoiar nisto —
+        // usar o relogio local permitiria atrasar a data para nunca vencer.
+        db.prepare('UPDATE licenca SET ultima_verificacao = ? WHERE id = ?')
+          .run(viaEdge.servidorEm || agora(), row.id)
+
+        // `encontrada: false` e uma resposta afirmativa do servidor: esta chave
+        // nao existe. E o caso da licenca forjada direto no SQLite local, que
+        // antes passava batido porque "nao encontrada" era tratado como "sem
+        // internet". Diferente de falha de rede, que devolve null e cai abaixo.
+        const invalida = viaEdge.encontrada === false || viaEdge.status === 'revogada'
+
+        if (invalida) {
+          if (!row.revogada_em) {
+            db.prepare('UPDATE licenca SET revogada_em = ? WHERE id = ?').run(agora(), row.id)
+            console.log('[licenca] invalidada pelo servidor. encontrada:', viaEdge.encontrada, 'status:', viaEdge.status)
+          }
+        } else if (row.revogada_em) {
+          db.prepare('UPDATE licenca SET revogada_em = NULL WHERE id = ?').run(row.id)
+        }
+
+        // Licenca ativada em outra maquina. NAO bloqueia por enquanto: o
+        // machine_id deriva de hostname/CPU (getMachineId), entao troca de peca
+        // ou renomear o computador mudaria o valor e derrubaria cliente legitimo.
+        // Fica registrado para decidir a politica depois.
+        if (viaEdge.maquinaConfere === false) {
+          console.warn('[licenca] machine_id diverge do registrado na ativacao')
+        }
+        return
+      }
+
+      // ── Fallback: consulta direta a tabela ──────────────────────────────
       try {
         const { data, error } = await supabase
           .from('licencas')
@@ -478,6 +583,42 @@ const dbModule = {
       }
     },
 
+    // Troca a licença por um JWT com a claim `loja_id` (ver
+    // electron/sessaoSupabase.js). Só age quando falta pouco para vencer, então
+    // pode ser chamada à vontade — no arranque e junto da verificação periódica.
+    //
+    // Nunca bloqueia nem lança: falhar aqui só significa continuar na chave
+    // anon, que é exatamente o comportamento de hoje.
+    async renovarSessaoSupabase() {
+      try {
+        if (!sessaoSupabase.precisaRenovar()) return { sucesso: true, jaValida: true }
+
+        const lic = db.prepare("SELECT chave FROM licenca WHERE modo_demo = 0 LIMIT 1").get()
+        if (!lic?.chave) return { sucesso: false, motivo: 'sem licenca ativada' }
+
+        const cfg = db.prepare('SELECT id, supabase_loja_id FROM configuracoes LIMIT 1').get()
+
+        const r = await sessaoSupabase.renovar({
+          chave: lic.chave,
+          machineId: getMachineId(),
+          lojaId: cfg?.supabase_loja_id || null,
+        })
+
+        // O servidor é a autoridade sobre qual loja é desta licença: numa
+        // reinstalação o PDV cria uma loja nova e chega aqui com o id errado,
+        // e é assim que ele volta a apontar para a loja original do cliente.
+        if (r.sucesso && r.lojaId && cfg && cfg.supabase_loja_id !== r.lojaId) {
+          console.warn(`[sessao] adotando loja do servidor: ${cfg.supabase_loja_id} -> ${r.lojaId}`)
+          db.prepare('UPDATE configuracoes SET supabase_loja_id = ? WHERE id = ?').run(r.lojaId, cfg.id)
+        }
+
+        return r
+      } catch (err) {
+        console.log('[sessao] renovação falhou:', err?.message || err)
+        return { sucesso: false, indisponivel: true }
+      }
+    },
+
     async ativar(chave) {
       if (!chave || chave.trim() === '') {
         return { sucesso: false, erro: 'Chave inválida' }
@@ -490,12 +631,43 @@ const dbModule = {
         return { sucesso: false, erro: 'Chave inválida' }
       }
 
-      try {
-        console.log('[licenca:ativar] buscando chave, variantes:', variantes)
+      // ── Caminho novo: Edge Function com service role ────────────────────
+      // Roda no servidor, entao nao depende de o cliente enxergar a tabela.
+      // E o que vai permitir fechar o SELECT de `licencas` para anon.
+      const viaEdge = await chamarEdgeLicenca('licenca-ativar', {
+        chave,
+        machine_id: machineId,
+      })
 
+      if (viaEdge) {
+        if (!viaEdge.sucesso) {
+          return { sucesso: false, erro: viaEdge.erro || 'Não foi possível ativar a licença' }
+        }
+        gravarLicencaLocal({
+          chaveCanonica: viaEdge.chave,
+          machineId,
+          nomeCliente: viaEdge.nomeCliente,
+          // A Edge Function nao devolve e-mail de proposito (nao expor PII).
+          email: '',
+          verificadaEm: viaEdge.servidorEm,
+        })
+        criarLojaEmBackground(viaEdge.nomeCliente)
+        console.log('[licenca:ativar] ativada via Edge Function')
+        return { sucesso: true, nomeCliente: viaEdge.nomeCliente }
+      }
+
+      // ── Fallback: consulta direta a tabela (versoes antigas do servidor) ──
+      try {
+        console.log('[licenca:ativar] edge indisponivel, usando consulta direta. variantes:', variantes)
+
+        // Colunas explícitas, não `*`: o endurecimento de `licencas` tirou
+        // `email_cliente`/`telefone` do GRANT de anon, e `loja_id` nunca esteve
+        // nele. Com `*` o Postgres nega a consulta inteira (42501) e este
+        // fallback — que existe justamente para quando a Edge Function cai —
+        // deixaria de ativar qualquer licença.
         const { data, error, status, statusText } = await supabase
           .from('licencas')
-          .select('*')
+          .select('id, chave, status, machine_id, nome_cliente, ativada_em, produto')
           .or(variantes.map((v) => `chave.eq.${v}`).join(','))
           .limit(1)
 
@@ -528,35 +700,14 @@ const dbModule = {
 
         // Salva a chave exatamente como está no Supabase — verificarPeriodicamente()
         // consulta por igualdade exata usando este valor.
-        db.prepare('DELETE FROM licenca').run()
-        db.prepare(`
-          INSERT INTO licenca (chave, machine_id, nome_cliente, email, ativada_em, modo_demo)
-          VALUES (?, ?, ?, ?, ?, 0)
-        `).run(registro.chave, machineId, registro.nome_cliente || '', registro.email_cliente || '', agora())
-
-        // Cria a loja no Supabase em background — não bloqueia a ativação
-        setImmediate(async () => {
-          try {
-            const jaTemLoja = db.prepare('SELECT supabase_loja_id FROM configuracoes LIMIT 1').get()
-            if (jaTemLoja?.supabase_loja_id) return // já foi criada
-
-            const lojaLocal = db.prepare('SELECT nome FROM lojas LIMIT 1').get()
-            const nomeLoja = lojaLocal?.nome || registro.nome_cliente || 'Minha Loja'
-            const resultado = await supabaseSync.criarLoja(db, nomeLoja)
-            if (resultado) {
-              const cfg = db.prepare('SELECT id FROM configuracoes LIMIT 1').get()
-              if (cfg) {
-                db.prepare(
-                  'UPDATE configuracoes SET supabase_loja_id = ?, codigo_loja = ? WHERE id = ?'
-                ).run(resultado.lojaId, resultado.codigoLoja, cfg.id)
-              } else {
-                db.prepare(
-                  'INSERT INTO configuracoes (supabase_loja_id, codigo_loja) VALUES (?, ?)'
-                ).run(resultado.lojaId, resultado.codigoLoja)
-              }
-            }
-          } catch {}
+        gravarLicencaLocal({
+          chaveCanonica: registro.chave,
+          machineId,
+          // `email_cliente` não é mais legível por anon (PII fora do GRANT).
+          email: '',
+          nomeCliente: registro.nome_cliente,
         })
+        criarLojaEmBackground(registro.nome_cliente)
 
         return { sucesso: true, nomeCliente: registro.nome_cliente }
       } catch (err) {

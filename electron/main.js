@@ -68,6 +68,12 @@ app.whenReady().then(() => {
     console.error('[startup] limparDemoResidual falhou:', e.message)
   }
 
+  // Pega o token com a claim loja_id (ver electron/sessaoSupabase.js). Não
+  // espera: falhar aqui só mantém o app na chave anon, como é hoje.
+  db.licenca.renovarSessaoSupabase().catch((e) => {
+    console.error('[startup] renovarSessaoSupabase falhou:', e.message)
+  })
+
   // Licença
   ipcMain.handle('licenca:verificar', () => db.licenca.verificar())
   ipcMain.handle('licenca:ativar', (_, chave) => db.licenca.ativar(chave))
@@ -76,8 +82,20 @@ app.whenReady().then(() => {
     return db.licenca.ativarDemo()
   })
   ipcMain.handle('licenca:resetar', () => db.licenca.resetar())
-  ipcMain.handle('licenca:verificarPeriodico', () => db.licenca.verificarPeriodicamente())
+  ipcMain.handle('licenca:verificarPeriodico', async () => {
+    const r = await db.licenca.verificarPeriodicamente()
+    // Mesma cadência da verificação de licença: renova o token quando estiver
+    // perto de vencer. `renovarSessaoSupabase` sai na hora se ainda está válido.
+    db.licenca.renovarSessaoSupabase().catch(() => {})
+    return r
+  })
   ipcMain.handle('licenca:info', () => db.licenca.info())
+
+  // Token da sessão para o renderer (realtime). Devolve a chave anon quando não
+  // há token — ver electron/sessaoSupabase.js.
+  ipcMain.handle('sessao:token', () => {
+    try { return require('./sessaoSupabase').tokenAtual() } catch { return null }
+  })
 
   // Loja
   ipcMain.handle('loja:get', () => db.loja.get())
