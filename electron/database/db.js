@@ -852,6 +852,18 @@ const dbModule = {
     listar() {
       return db.prepare('SELECT * FROM menu_items ORDER BY sort_order, nome').all()
     },
+    /**
+     * Busca por codigo de barras. Usa o indice parcial idx_menu_codigo_barras.
+     *
+     * Nao filtra por `disponivel`: se o produto estiver desativado, quem chama
+     * precisa saber que ele existe para avisar "produto desativado" em vez de
+     * "codigo nao cadastrado" — sao problemas diferentes para o lojista.
+     */
+    buscarPorCodigoBarras(codigo) {
+      const limpo = String(codigo || '').trim()
+      if (!limpo) return null
+      return db.prepare('SELECT * FROM menu_items WHERE codigo_barras = ?').get(limpo) || null
+    },
     criar(dados) {
       const { nome, descricao, preco, imagem, categoria, categoriaId, disponivel,
         adicionais, estoqueAtual, estoqueMinimo, custoUnitario, unidade, codigoBarras,

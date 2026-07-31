@@ -3,6 +3,7 @@ import { X, Plus, Minus, Search, ShoppingCart } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '../../lib/api'
 import { formatarMoeda } from '../../lib/utils'
+import { useLeitorCodigoBarras } from '../../hooks/useLeitorCodigoBarras'
 
 const isElectron = typeof window !== 'undefined' && window.api
 
@@ -64,6 +65,34 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
       adicionarItem(produto)
     }
   }
+
+  // Leitor de codigo de barras. Fica desligado com modal aberto para o codigo
+  // nao cair na tela errada enquanto o operador escolhe sabor ou pesa produto.
+  useLeitorCodigoBarras(async (codigo) => {
+    // O leitor "digita" o codigo, entao os digitos tambem caem na busca. Limpar
+    // aqui evita a lista ficar vazia depois de bipar.
+    setBusca('')
+
+    let produto
+    try {
+      produto = await api.produtos.buscarPorCodigoBarras(codigo)
+    } catch {
+      toast.error('Erro ao buscar o código lido')
+      return
+    }
+
+    if (!produto) {
+      toast.error(`Código ${codigo} não cadastrado em nenhum produto`)
+      return
+    }
+    if (!produto.disponivel) {
+      // Diferente de "nao cadastrado": aqui o lojista so precisa reativar.
+      toast.error(`${produto.nome} está desativado no cardápio`)
+      return
+    }
+
+    handleClicarProduto(produto)
+  }, !modalMeioMeio && !modalPeso)
 
   function adicionarItem(produto, quantidade = 1, obs = '', adicionais = []) {
     const precoBase = produto.preco
@@ -227,7 +256,7 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
             <input
               value={busca}
               onChange={e => setBusca(e.target.value)}
-              placeholder="Buscar produto..."
+              placeholder="Buscar produto ou bipar código de barras..."
               className="w-full pl-9 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
             />
           </div>

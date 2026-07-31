@@ -71,6 +71,7 @@ function mockApi() {
       atualizar: async (d) => { const i = produtos.findIndex(p => p.id === d.id); if (i >= 0) produtos[i] = { ...produtos[i], ...d }; return produtos[i] },
       deletar: async (id) => { produtos = produtos.filter(p => p.id !== id); return { sucesso: true } },
       toggleDisponivel: async (id) => { const p = produtos.find(p => p.id === id); if (p) p.disponivel = p.disponivel ? 0 : 1; return p },
+      buscarPorCodigoBarras: async (codigo) => produtos.find(p => p.codigo_barras === String(codigo).trim()) || null,
     },
     categorias: {
       listar: async () => mockCategorias,

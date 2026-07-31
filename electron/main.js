@@ -107,6 +107,7 @@ app.whenReady().then(() => {
   ipcMain.handle('produtos:atualizar', (_, dados) => db.produtos.atualizar(dados))
   ipcMain.handle('produtos:deletar', (_, id) => db.produtos.deletar(id))
   ipcMain.handle('produtos:toggleDisponivel', (_, id) => db.produtos.toggleDisponivel(id))
+  ipcMain.handle('produtos:buscarPorCodigoBarras', (_, codigo) => db.produtos.buscarPorCodigoBarras(codigo))
 
   // Categorias
   ipcMain.handle('categorias:listar', () => db.categorias.listar())

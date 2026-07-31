@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('api', {
     atualizar: (dados) => invoke('produtos:atualizar', dados),
     deletar: (id) => invoke('produtos:deletar', id),
     toggleDisponivel: (id) => invoke('produtos:toggleDisponivel', id),
+    buscarPorCodigoBarras: (codigo) => invoke('produtos:buscarPorCodigoBarras', codigo),
   },
 
   // Categorias
