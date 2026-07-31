@@ -6,7 +6,7 @@ aqui fica o que muda.
 ## Onde estamos
 
 **Plano ativo:** `docs/superpowers/plans/2026-07-31-fundacao-passos-0-3.md`
-**Task atual:** 1 — Baseline limpo e memória do agente
+**Task atual:** 5 — App do garçom adota o JWT
 **Spec:** `docs/superpowers/specs/2026-07-31-remodelagem-tapedido-design.md`
 
 ## Contexto que não está no código
@@ -43,6 +43,26 @@ aqui fica o que muda.
   commit de maio/2026.
 - Criados `CLAUDE.md` e este arquivo.
 
+### Task 2 — Schema definitivo (31/07, `72d0fa36`)
+
+Todas as colunas das 8 features entraram de uma vez, antes de existir dado de
+cliente. Verificado que aplicam num banco novo e que o índice único parcial
+recusa baixa dupla do mesmo pedido, aceita outro produto no mesmo pedido e não
+atrapalha entrada manual repetida.
+
+### Task 3 — Infraestrutura de teste (31/07, `5d38b50d`)
+
+`npm test` passa a existir. Três obstáculos caíram: o ABI do `better-sqlite3`
+(resolvido rodando sob `ELECTRON_RUN_AS_NODE`), o caminho fixo do banco
+(`TAPEDIDO_DB_PATH`), e o `postcss.config.js` em ESM que o Node 18 lia como
+CommonJS (config de postcss inline no `vitest.config.js`).
+
+### Task 4 — Testes dos caminhos de dinheiro (31/07, `80af3df2`)
+
+19 testes em 4 arquivos, todos verdes. Congelam o comportamento atual de
+pedido, caixa, dashboard e relatórios.
+
 ## Próximo
 
-Tasks 2 a 6 do plano ativo. Depois, o plano das 8 features do anúncio.
+Tasks 5 e 6: app do garçom adota o JWT, depois a virada da RLS. Feito isso, o
+plano das 8 features do anúncio.
