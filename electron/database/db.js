@@ -359,6 +359,57 @@ try {
   )`)
 } catch {}
 
+// ── Schema das features do anuncio (31/07/2026) ────────────────────────────
+// Entra tudo de uma vez, inclusive o que so sera usado nas features
+// seguintes. Motivo: ate 01/08 nao ha dado de cliente e o schema e livre;
+// depois disso cada ALTER TABLE vira migracao com banco de lojista em
+// producao. Ver docs/superpowers/specs/2026-07-31-remodelagem-tapedido-design.md
+
+// Razao contabil do estoque. saldo_anterior/saldo_posterior tornam o
+// historico auditavel: da para reconstruir como o saldo chegou onde chegou,
+// em vez de so ver o valor final.
+for (const col of ['saldo_anterior REAL', 'saldo_posterior REAL',
+                   'referencia_tipo TEXT', 'referencia_id TEXT']) {
+  try { db.exec(`ALTER TABLE estoque_movimentacoes ADD COLUMN ${col}`) } catch {}
+}
+
+// A protecao contra baixa dupla e do banco, nao do codigo. O caixa ja foi
+// mordido por isso: o eco do realtime do app do garcom lancava a mesma venda
+// duas vezes e a defesa era heuristica. Aqui a segunda tentativa e recusada
+// pelo indice. Movimentacao manual (sem referencia) fica de fora do indice
+// parcial e segue livre para repetir.
+try {
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_estoque_ref
+    ON estoque_movimentacoes (referencia_tipo, referencia_id, menu_item_id)
+    WHERE referencia_tipo IS NOT NULL`)
+} catch {}
+
+// Custo fotografado no momento da venda. Sem isto, o relatorio de custo x
+// lucro leria o custo ATUAL do produto e um reajuste de fornecedor em
+// outubro reescreveria o lucro de agosto. Nao ha conserto depois: o custo da
+// epoca nao fica registrado em lugar nenhum.
+try { db.exec(`ALTER TABLE itens_pedido ADD COLUMN custo_unitario REAL DEFAULT 0`) } catch {}
+try { db.exec(`ALTER TABLE comanda_itens ADD COLUMN custo_unitario REAL DEFAULT 0`) } catch {}
+
+try { db.exec(`ALTER TABLE entregadores ADD COLUMN placa TEXT`) } catch {}
+
+// Alimenta o "ha quanto tempo neste estagio" das colunas do kanban.
+try { db.exec(`ALTER TABLE pedidos ADD COLUMN status_alterado_em TEXT`) } catch {}
+
+// Sem impressora_tipo o codigo teria que adivinhar USB ou rede pelo
+// preenchimento do IP.
+try { db.exec(`ALTER TABLE configuracoes ADD COLUMN impressora_tipo TEXT DEFAULT 'usb'`) } catch {}
+try { db.exec(`ALTER TABLE configuracoes ADD COLUMN impressora_copias INTEGER DEFAULT 1`) } catch {}
+
+// Indice parcial: a maioria dos produtos de restaurante nao tem codigo de
+// barras. FormProduto grava string vazia quando o campo fica em branco e o
+// schema permite NULL; os dois casos ficam de fora.
+try {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_menu_codigo_barras
+    ON menu_items (codigo_barras)
+    WHERE codigo_barras IS NOT NULL AND codigo_barras != ''`)
+} catch {}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 const agora = () => new Date().toISOString()
 
