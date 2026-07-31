@@ -1,9 +1,25 @@
 import React, { useEffect, useState, useMemo } from 'react'
-import { X, Plus, Minus, Search, ShoppingCart } from 'lucide-react'
+import { X, Plus, Minus, Search, ShoppingCart, Pencil } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '../../lib/api'
 import { formatarMoeda } from '../../lib/utils'
 import { useLeitorCodigoBarras } from '../../hooks/useLeitorCodigoBarras'
+import { precoUnitarioItem, subtotalItem, somarCarrinho } from '../../lib/precoItem'
+import ModalItem from './ModalItem'
+
+// Os adicionais do produto vem do SQLite como TEXT com JSON dentro. O fallback
+// de fora do Electron (src/lib/api.js) ja devolve array — aceitar os dois.
+function adicionaisDoProduto(produto) {
+  const bruto = produto?.adicionais
+  if (Array.isArray(bruto)) return bruto
+  if (typeof bruto !== 'string' || !bruto.trim()) return []
+  try {
+    const lista = JSON.parse(bruto)
+    return Array.isArray(lista) ? lista : []
+  } catch {
+    return []
+  }
+}
 
 const isElectron = typeof window !== 'undefined' && window.api
 
@@ -27,6 +43,7 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
   })
   const [modalMeioMeio, setModalMeioMeio] = useState(null)
   const [modalPeso, setModalPeso] = useState(null)
+  const [modalItem, setModalItem] = useState(null)
   const [salvando, setSalvando] = useState(false)
 
   const [pedidoMinimo, setPedidoMinimo] = useState(0)
@@ -55,15 +72,48 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
     return zona?.taxa_entrega || 0
   }, [tipo, form.bairro, zonas])
 
-  const subtotal = useMemo(() => carrinho.reduce((a, b) => a + b.subtotal, 0), [carrinho])
+  const subtotal = useMemo(() => somarCarrinho(carrinho), [carrinho])
   const total = subtotal + taxaEntrega
 
   function handleClicarProduto(produto) {
     if (produto.unidade === 'kg') {
+      // Produto por peso vai direto para a balanca; a observacao dele, se
+      // precisar, sai pelo lapis na linha do carrinho.
       setModalPeso(produto)
-    } else {
-      adicionarItem(produto)
+      return
     }
+    const adicionais = adicionaisDoProduto(produto)
+    if (adicionais.length > 0) {
+      setModalItem({ produto, precoBase: produto.preco, adicionaisDisponiveis: adicionais, indice: null })
+      return
+    }
+    adicionarItem(produto)
+  }
+
+  // Abre o mesmo modal para corrigir uma linha ja no carrinho — e por aqui que
+  // produto sem adicionais cadastrados ganha observacao.
+  function abrirEdicaoItem(indice) {
+    const item = carrinho[indice]
+    const produto = produtos.find(p => p.id === item.menuItemId)
+    setModalItem({
+      produto,
+      nome: item.nomeItem,
+      precoBase: item.precoBase ?? item.precoUnitario,
+      // Pizza meio a meio nao tem um produto unico; oferecer os adicionais de um
+      // dos sabores daria a entender que valem para a pizza toda.
+      adicionaisDisponiveis: item.sabor2 ? [] : adicionaisDoProduto(produto),
+      permiteQuantidade: produto?.unidade !== 'kg',
+      indice,
+    })
+  }
+
+  function confirmarModalItem({ quantidade, observacao, adicionais }) {
+    if (modalItem.indice != null) {
+      substituirItem(modalItem.indice, { quantidade, observacao, adicionais })
+    } else {
+      adicionarItem(modalItem.produto, quantidade, observacao, adicionais)
+    }
+    setModalItem(null)
   }
 
   // Leitor de codigo de barras. Fica desligado com modal aberto para o codigo
@@ -92,12 +142,11 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
     }
 
     handleClicarProduto(produto)
-  }, !modalMeioMeio && !modalPeso)
+  }, !modalMeioMeio && !modalPeso && !modalItem)
 
   function adicionarItem(produto, quantidade = 1, obs = '', adicionais = []) {
     const precoBase = produto.preco
-    const precoAdicionais = adicionais.reduce((a, b) => a + b.preco, 0)
-    const precoUnitario = precoBase + precoAdicionais
+    const precoUnitario = precoUnitarioItem(precoBase, adicionais)
 
     const existente = carrinho.find(c =>
       c.menuItemId === produto.id && c.observacao === obs &&
@@ -107,7 +156,11 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
     if (existente) {
       setCarrinho(prev => prev.map(c =>
         c === existente
-          ? { ...c, quantidade: c.quantidade + quantidade, subtotal: (c.quantidade + quantidade) * precoUnitario }
+          ? {
+              ...c,
+              quantidade: c.quantidade + quantidade,
+              subtotal: subtotalItem(precoBase, adicionais, c.quantidade + quantidade),
+            }
           : c
       ))
     } else {
@@ -115,13 +168,32 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
         menuItemId: produto.id,
         nomeItem: produto.nome,
         quantidade,
+        // Guardado separado do precoUnitario para a edicao poder recalcular os
+        // adicionais sem somar duas vezes o que ja estava dentro.
+        precoBase,
         precoUnitario,
-        subtotal: quantidade * precoUnitario,
+        subtotal: subtotalItem(precoBase, adicionais, quantidade),
         observacao: obs,
         adicionaisEscolhidos: adicionais,
       }])
     }
     toast.success(`${produto.nome} adicionado!`, { duration: 900 })
+  }
+
+  function substituirItem(indice, { quantidade, observacao, adicionais }) {
+    setCarrinho(prev => prev.map((c, i) => {
+      if (i !== indice) return c
+      const precoBase = c.precoBase ?? c.precoUnitario
+      return {
+        ...c,
+        quantidade,
+        precoBase,
+        precoUnitario: precoUnitarioItem(precoBase, adicionais),
+        subtotal: subtotalItem(precoBase, adicionais, quantidade),
+        observacao,
+        adicionaisEscolhidos: adicionais,
+      }
+    }))
   }
 
   function adicionarMeioMeio(sabor1, sabor2) {
@@ -130,6 +202,7 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
       menuItemId: sabor1.id,
       nomeItem: 'Pizza Meio a Meio',
       quantidade: 1,
+      precoBase: preco,
       precoUnitario: preco,
       subtotal: preco,
       observacao: '',
@@ -147,7 +220,11 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
       if (i !== index) return c
       const novaQtd = c.quantidade + delta
       if (novaQtd <= 0) return null
-      return { ...c, quantidade: novaQtd, subtotal: novaQtd * c.precoUnitario }
+      return {
+        ...c,
+        quantidade: novaQtd,
+        subtotal: subtotalItem(c.precoBase ?? c.precoUnitario, c.adicionaisEscolhidos, novaQtd),
+      }
     }).filter(Boolean))
   }
 
@@ -358,12 +435,19 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
                     {item.descricao && <p className="text-xs text-gray-400 mt-0.5">{item.descricao}</p>}
                     {item.observacao && <p className="text-xs text-blue-500 mt-0.5">{item.observacao}</p>}
                     {item.adicionaisEscolhidos?.length > 0 && (
-                      <p className="text-xs text-gray-400 mt-0.5">{item.adicionaisEscolhidos.map(a => a.nome).join(', ')}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">+ {item.adicionaisEscolhidos.map(a => a.nome).join(', ')}</p>
                     )}
                   </div>
                   <p className="text-sm font-bold text-orange-600 whitespace-nowrap">{formatarMoeda(item.subtotal)}</p>
                 </div>
                 <div className="flex items-center gap-2 mt-2">
+                  <button
+                    onClick={() => abrirEdicaoItem(i)}
+                    title="Adicionais e observação"
+                    className="w-7 h-7 rounded-full bg-gray-100 hover:bg-blue-100 hover:text-blue-600 flex items-center justify-center transition-colors"
+                  >
+                    <Pencil size={12} />
+                  </button>
                   <button
                     onClick={() => alterarQtd(i, -1)}
                     className="w-7 h-7 rounded-full bg-gray-100 hover:bg-red-100 hover:text-red-600 flex items-center justify-center transition-colors"
@@ -519,6 +603,19 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
           produto={modalPeso}
           onConfirmar={(qty) => { adicionarItem(modalPeso, qty); setModalPeso(null) }}
           onFechar={() => setModalPeso(null)}
+        />
+      )}
+
+      {/* Modal Adicionais / Observação */}
+      {modalItem && (
+        <ModalItem
+          nome={modalItem.nome ?? modalItem.produto?.nome}
+          precoBase={modalItem.precoBase}
+          adicionaisDisponiveis={modalItem.adicionaisDisponiveis}
+          permiteQuantidade={modalItem.permiteQuantidade !== false}
+          itemInicial={modalItem.indice != null ? carrinho[modalItem.indice] : null}
+          onConfirmar={confirmarModalItem}
+          onFechar={() => setModalItem(null)}
         />
       )}
     </div>

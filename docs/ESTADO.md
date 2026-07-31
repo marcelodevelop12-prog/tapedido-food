@@ -6,7 +6,7 @@ aqui fica o que muda.
 ## Onde estamos
 
 **Plano ativo:** `docs/superpowers/plans/2026-07-31-fundacao-passos-0-3.md`
-**Task atual:** 5 — App do garçom adota o JWT
+**Task atual:** Features do anúncio (5 e 6 bloqueadas — ver abaixo)
 **Spec:** `docs/superpowers/specs/2026-07-31-remodelagem-tapedido-design.md`
 
 ## Contexto que não está no código
@@ -73,6 +73,46 @@ a de login (a Edge Function recebe os dois códigos juntos). Isso também fechou
 uma brecha: a tela antiga respondia se um código de loja existia, o que
 permitia varrer códigos válidos.
 
+### Feature 1 — Impressora térmica de verdade (31/07, `460e14cb`)
+
+O stub vazio virou `electron/database/impressao.js`. Cupom e comanda são
+montados uma vez como lista de linhas e despachados para USB (spooler do
+Windows, via `electron-pos-printer`) ou rede (ESC/POS cru em socket TCP na
+porta 9100) — são transportes sem nada em comum além do texto.
+
+Na tela de configuração, o nome da impressora deixou de ser digitado e virou
+lista das instaladas: um espaço a mais no nome fazia a impressão falhar calada.
+Tem botão de cupom de teste, que salva a configuração antes de imprimir.
+
+Acentos são removidos de propósito — impressora térmica tem code page
+inconsistente e "ção" saía como lixo.
+
+### Feature 2 — Leitor de código de barras (31/07, `2eac7e60`)
+
+`src/hooks/useLeitorCodigoBarras.js` + `produtos.buscarPorCodigoBarras`.
+
+O leitor USB não tem driver: ele se apresenta como teclado. O que o distingue
+de alguém digitando é a velocidade — mais de 60ms entre teclas reinicia o
+buffer. Código não cadastrado e produto desativado dão mensagens diferentes,
+porque são problemas diferentes para o lojista.
+
+### Feature 3 — Adicionais e observação por item (31/07)
+
+`src/pages/Pedidos/ModalItem.jsx` + `src/lib/precoItem.js`.
+
+Clicar num produto que tem adicionais cadastrados abre o modal; produto sem
+adicionais continua entrando direto no carrinho com um clique — o caminho
+rápido do balcão não podia ficar mais lento. Qualquer linha do carrinho ganha
+observação pelo lápis, inclusive produto sem adicionais.
+
+A conta de preço saiu da tela para `src/lib/precoItem.js` e ganhou teste: o
+componente React não é testável sob o runtime atual. De quebra, todo valor
+agora volta arredondado em centavos — antes `12.90 + 2.50` entrava no pedido
+como `15.400000000000002`.
+
+O item guarda `precoBase` separado de `precoUnitario`; sem isso, editar os
+adicionais de uma linha somaria duas vezes o que já estava embutido no preço.
+
 ## 🚧 BLOQUEIO ATIVO — `JWT_SECRET` não configurado
 
 A Edge Function `entrar` responde **503 em toda chamada**, desde sempre —
@@ -100,4 +140,10 @@ fechar, e a janela de virar a RLS sem base instalada fecha em 01/08.
    painel do Supabase — é credencial).
 2. Retomar a Task 5 a partir do Step 7 (teste dos 4 cenários) e publicar.
 3. Task 6: virada da RLS.
-4. Depois, o plano das 8 features do anúncio.
+
+Features restantes do anúncio, na ordem de risco de reclamação:
+
+4. Baixa automática de estoque em `pedidos.criar`, com o ledger idempotente
+   que a Task 2 já preparou.
+5. Cadastro de entregadores (tela) e kanban de delivery de verdade.
+6. Categorias personalizadas, relatório de custo × lucro e exportação em PDF.
