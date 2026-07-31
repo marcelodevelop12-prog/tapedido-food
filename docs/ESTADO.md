@@ -113,33 +113,55 @@ como `15.400000000000002`.
 O item guarda `precoBase` separado de `precoUnitario`; sem isso, editar os
 adicionais de uma linha somaria duas vezes o que já estava embutido no preço.
 
-## 🚧 BLOQUEIO ATIVO — `JWT_SECRET` não configurado
+### `JWT_SECRET` — resolvido (31/07)
 
-A Edge Function `entrar` responde **503 em toda chamada**, desde sempre —
-confirmado nos logs, inclusive nas tentativas de 30/07 23:41. Nenhum token foi
-emitido até hoje.
+O secret foi cadastrado e a Edge Function `entrar` saiu do 503. Testada de
+ponta a ponta:
 
-Causa, direto do código
-(`supabase/functions/entrar/index.ts:224`): o secret `JWT_SECRET` (ou
-`TAPEDIDO_JWT_SECRET`) não existe nos secrets da função, e ela devolve 503 de
-propósito nesse caso.
+| Cenário | Resultado |
+|---|---|
+| Loja `4W48D8` + código `4321` | 200, token com `loja_id` certo |
+| Token levado ao PostgREST | **200 — o Postgres valida a assinatura** |
+| Código de garçom errado | 403 `Credenciais invalidas` |
+| Loja inexistente | 403 (mesma mensagem — não dá para enumerar lojas) |
+| Campos vazios | 400 |
+| PDV, máquina errada | 403 `Licenca em uso em outra maquina` |
+| PDV, licença revogada | 403 `Licenca revogada` |
 
-**O valor precisa ser o JWT Secret do próprio projeto Supabase**, não um valor
-aleatório. A função assina em HS256 e o Postgres verifica a assinatura com o
-segredo do projeto; com um segredo diferente, os tokens seriam emitidos mas
-`auth.jwt()` não os validaria — e, depois da virada da RLS, os dois apps
-parariam de ler qualquer coisa.
+O teste do PostgREST era o que importava: prova que o segredo cadastrado é
+mesmo o do projeto. Com um valor aleatório, o token seria emitido normalmente
+e só falharia depois da virada da RLS — quando já seria tarde.
 
-Enquanto isso não for resolvido, **nada está quebrado**: sem token, os dois
-apps usam a chave anon e funcionam como sempre. Mas as Tasks 5 e 6 não podem
-fechar, e a janela de virar a RLS sem base instalada fecha em 01/08.
+## 🚧 BLOQUEIO ATIVO — a virada da RLS depende de release publicada
+
+Descoberto ao testar: **o JWT do PDV não está na versão que os clientes têm.**
+A tag `v1.2.0` aponta para `f720c792`; o commit que ensina o PDV a pegar token
+é `4b8dddd1`, posterior. Ou seja, todo PDV instalado hoje fala com o Supabase
+usando a chave anon crua.
+
+Existe uma licença real ativada em máquina de cliente (loja
+`ed3a1bc2-dfc9-4fd0-b1be-0102cc80d191`). Virar a RLS antes de esse PDV estar
+atualizado **para a sincronização dele** — silenciosamente, porque o cliente
+não vê erro de RLS, vê dado que não chega.
+
+Ordem obrigatória:
+
+1. Publicar o app do garçom (Vercel). Seguro: sem token, cai no fallback anon.
+2. Publicar release do PDV com o JWT. Mesmo fallback.
+3. **Confirmar que o PDV do cliente real atualizou e está pegando token** —
+   dá para ver nos logs da função `entrar`.
+4. Só então virar a RLS.
+
+O passo 3 é o portão e não dá para apressar: depende do auto-update chegar na
+máquina do cliente. Enquanto a RLS não vira, nada está quebrado — mas os dados
+das 10 tabelas seguem legíveis por qualquer um com a chave anon.
 
 ## Próximo
 
-1. Configurar `JWT_SECRET` nos secrets da função `entrar` (ação manual no
-   painel do Supabase — é credencial).
-2. Retomar a Task 5 a partir do Step 7 (teste dos 4 cenários) e publicar.
-3. Task 6: virada da RLS.
+1. Publicar o app do garçom e uma release do PDV (ambos pedem confirmação —
+   são ações para fora).
+2. Task 6: virada da RLS, só depois de confirmar que o PDV do cliente real
+   está pegando token.
 
 Features restantes do anúncio, na ordem de risco de reclamação:
 
