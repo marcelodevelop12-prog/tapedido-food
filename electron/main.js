@@ -224,6 +224,19 @@ app.whenReady().then(() => {
   // Impressão
   ipcMain.handle('impressao:comanda', (_, dados) => db.impressao.comanda(dados))
   ipcMain.handle('impressao:recibo', (_, dados) => db.impressao.recibo(dados))
+  ipcMain.handle('impressao:teste', () => db.impressao.teste())
+
+  // Lista as impressoras instaladas no Windows. Antes o lojista tinha que
+  // digitar o nome exato como aparece no painel de controle — um espaco a mais
+  // e a impressao falhava sem dizer por que.
+  ipcMain.handle('impressao:listar', async () => {
+    try {
+      return await mainWindow.webContents.getPrintersAsync()
+    } catch (err) {
+      console.error('[impressao] nao foi possivel listar impressoras:', err.message)
+      return []
+    }
+  })
 
   // Diálogo de arquivo
   ipcMain.handle('dialog:openFile', async (_, options) => {

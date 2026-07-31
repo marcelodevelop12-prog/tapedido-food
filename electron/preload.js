@@ -140,6 +140,8 @@ contextBridge.exposeInMainWorld('api', {
   impressao: {
     comanda: (dados) => invoke('impressao:comanda', dados),
     recibo: (dados) => invoke('impressao:recibo', dados),
+    teste: () => invoke('impressao:teste'),
+    listar: () => invoke('impressao:listar'),
   },
 
   // Dialog

@@ -24,6 +24,8 @@ export default function Configuracoes() {
   const [salvando, setSalvando] = useState(false)
   const [carregando, setCarregando] = useState(true)
   const [portasDisponiveis, setPortasDisponiveis] = useState([])
+  const [impressoras, setImpressoras] = useState([])
+  const [testandoImpressao, setTestandoImpressao] = useState(false)
   const [balancaConectada, setBalancaConectada] = useState(false)
   const [pesoTeste, setPesoTeste] = useState(null)
   const [testando, setTestando] = useState(false)
@@ -51,7 +53,41 @@ export default function Configuracoes() {
   useEffect(() => {
     if (aba === 'balanca') carregarPortas()
     if (aba === 'garcom') carregarDadosGarcom()
+    if (aba === 'impressora') carregarImpressoras()
   }, [aba])
+
+  async function carregarImpressoras() {
+    if (!isElectron) return
+    try {
+      setImpressoras(await window.api.impressao.listar())
+    } catch {
+      setImpressoras([])
+    }
+  }
+
+  async function imprimirTeste() {
+    if (!isElectron) return
+    setTestandoImpressao(true)
+    try {
+      // Salva antes de testar: sem isso o teste usaria a configuracao antiga e
+      // o lojista concluiria que o ajuste que acabou de fazer nao funcionou.
+      await api.config.update({
+        impressora_largura: config.impressora_largura || '80mm',
+        impressora_tipo: config.impressora_tipo || 'usb',
+        impressora_copias: Number(config.impressora_copias) || 1,
+        impressora_nome: config.impressora_nome || null,
+        impressora_ip: config.impressora_ip || null,
+        impressora_porta: Number(config.impressora_porta) || 9100,
+      })
+      const r = await window.api.impressao.teste()
+      if (r?.erro) toast.error(r.erro, { duration: 8000 })
+      else toast.success('Cupom de teste enviado para a impressora!')
+    } catch (err) {
+      toast.error(`Erro ao imprimir: ${err?.message || err}`)
+    } finally {
+      setTestandoImpressao(false)
+    }
+  }
 
   async function carregar() {
     try {
@@ -87,6 +123,8 @@ export default function Configuracoes() {
       if (aba === 'impressora') {
         await api.config.update({
           impressora_largura: config.impressora_largura || '80mm',
+          impressora_tipo: config.impressora_tipo || 'usb',
+          impressora_copias: Number(config.impressora_copias) || 1,
           impressora_nome: config.impressora_nome || null,
           impressora_ip: config.impressora_ip || null,
           impressora_porta: Number.isNaN(config.impressora_porta) ? null : (config.impressora_porta || null),
@@ -368,6 +406,33 @@ export default function Configuracoes() {
       {aba === 'impressora' && (
         <form onSubmit={salvarConfig} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-5 max-w-2xl">
           <h3 className="font-semibold text-gray-800">Configuração de Impressora Térmica</h3>
+
+          {/* Como a impressora esta ligada. Decide qual caminho o cupom toma:
+              USB vai pelo spooler do Windows, rede vai por socket TCP. */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Como a impressora está conectada?</label>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { valor: 'usb', titulo: '🔌 USB', desc: 'Instalada no Windows' },
+                { valor: 'rede', titulo: '🌐 Rede', desc: 'Tem endereço IP' },
+              ].map(opcao => (
+                <button
+                  key={opcao.valor}
+                  type="button"
+                  onClick={() => setConfig(p => ({ ...p, impressora_tipo: opcao.valor }))}
+                  className={`text-left border-2 rounded-xl px-4 py-3 transition-all ${
+                    (config.impressora_tipo || 'usb') === opcao.valor
+                      ? 'border-orange-500 bg-orange-50'
+                      : 'border-gray-200 hover:border-orange-200'
+                  }`}
+                >
+                  <p className="font-semibold text-gray-800 text-sm">{opcao.titulo}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{opcao.desc}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Largura do Papel</label>
@@ -377,21 +442,58 @@ export default function Configuracoes() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Nome da Impressora</label>
-              <input value={config.impressora_nome || ''} onChange={e => setConfig(p => ({ ...p, impressora_nome: e.target.value }))} placeholder="Nome no Windows" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
+              <label className="block text-sm font-medium text-gray-700 mb-1">Cópias por impressão</label>
+              <input type="number" min="1" max="5" value={config.impressora_copias || 1} onChange={e => setConfig(p => ({ ...p, impressora_copias: parseInt(e.target.value) || 1 }))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">IP da Impressora (rede)</label>
-              <input value={config.impressora_ip || ''} onChange={e => setConfig(p => ({ ...p, impressora_ip: e.target.value }))} placeholder="192.168.1.100" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Porta (padrão 9100)</label>
-              <input type="number" value={config.impressora_porta || 9100} onChange={e => setConfig(p => ({ ...p, impressora_porta: parseInt(e.target.value) }))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
-            </div>
+
+            {(config.impressora_tipo || 'usb') === 'usb' ? (
+              <div className="col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Impressora</label>
+                <div className="flex gap-2">
+                  <select
+                    value={config.impressora_nome || ''}
+                    onChange={e => setConfig(p => ({ ...p, impressora_nome: e.target.value }))}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="">Selecione a impressora</option>
+                    {impressoras.map(i => (
+                      <option key={i.name} value={i.name}>
+                        {i.displayName || i.name}{i.isDefault ? ' (padrão)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" onClick={carregarImpressoras} className="px-3 py-2 border border-gray-300 rounded-lg text-sm hover:bg-gray-50 transition-colors" title="Atualizar lista">
+                    <RefreshCw size={15} />
+                  </button>
+                </div>
+                {impressoras.length === 0 && (
+                  <p className="text-xs text-gray-400 mt-1">Nenhuma impressora encontrada. Verifique se ela está instalada e ligada.</p>
+                )}
+              </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">IP da Impressora</label>
+                  <input value={config.impressora_ip || ''} onChange={e => setConfig(p => ({ ...p, impressora_ip: e.target.value }))} placeholder="192.168.1.100" className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Porta (padrão 9100)</label>
+                  <input type="number" value={config.impressora_porta || 9100} onChange={e => setConfig(p => ({ ...p, impressora_porta: parseInt(e.target.value) }))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" />
+                </div>
+              </>
+            )}
           </div>
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-700">
-            <strong>💡 Dica:</strong> Para impressoras USB, informe o nome exato como aparece no Windows (Painel de Controle → Dispositivos e Impressoras). Para impressoras de rede, informe o IP e porta.
-          </div>
+
+          {/* O unico jeito de saber se a configuracao esta certa e imprimir. */}
+          <button
+            type="button"
+            onClick={imprimirTeste}
+            disabled={testandoImpressao}
+            className="flex items-center gap-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+          >
+            <Printer size={16} />
+            {testandoImpressao ? 'Imprimindo...' : 'Imprimir cupom de teste'}
+          </button>
           <label className="flex items-center gap-3 cursor-pointer select-none">
             <input
               type="checkbox"

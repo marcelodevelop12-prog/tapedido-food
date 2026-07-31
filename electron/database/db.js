@@ -2,6 +2,7 @@ const path = require('path')
 const { app, dialog } = require('electron')
 const crypto = require('crypto')
 const os = require('os')
+const { criarImpressao } = require('./impressao')
 
 let Database, supabase, supabaseSync, ws, sessaoSupabase
 
@@ -1619,15 +1620,12 @@ const dbModule = {
   },
 
   // ── Impressão ───────────────────────────────────────────────────────────────
-  impressao: {
-    comanda(dados) {
-      // Implementação futura com electron-pos-printer
-      return { sucesso: true }
-    },
-    recibo(dados) {
-      return { sucesso: true }
-    },
-  },
+  // Implementacao em electron/database/impressao.js. Recebe os leitores em vez
+  // de importar `dbModule`, que ainda nao existe neste ponto do arquivo.
+  impressao: criarImpressao(
+    () => db.prepare('SELECT * FROM configuracoes LIMIT 1').get(),
+    () => db.prepare('SELECT * FROM lojas LIMIT 1').get()
+  ),
 }
 
 dbModule.getRawDb = () => db
