@@ -8,8 +8,14 @@ let Database, supabase, supabaseSync, ws, sessaoSupabase
 try {
   Database = require('better-sqlite3')
 } catch (err) {
-  dialog.showErrorBox('Erro: better-sqlite3', `Falha ao carregar o banco de dados:\n\n${err.message}\n\nStack:\n${err.stack}`)
-  process.exit(1)
+  // `dialog` e undefined fora do Electron (nos testes). Sem esta guarda, a
+  // falha viraria "cannot read properties of undefined" e esconderia o erro
+  // real — que aqui costuma ser incompatibilidade de ABI do better-sqlite3.
+  if (dialog) {
+    dialog.showErrorBox('Erro: better-sqlite3', `Falha ao carregar o banco de dados:\n\n${err.message}\n\nStack:\n${err.stack}`)
+    process.exit(1)
+  }
+  throw err
 }
 
 try {
@@ -33,7 +39,10 @@ try {
 }
 
 const userDataPath = app ? app.getPath('userData') : '.'
-const dbPath = path.join(userDataPath, 'tapedido.db')
+// TAPEDIDO_DB_PATH existe para os testes. Fora do Electron `app` e undefined e
+// o banco cairia em ./tapedido.db, dentro do repositorio; com a variavel cada
+// suite abre seu proprio arquivo temporario e nada vaza entre testes.
+const dbPath = process.env.TAPEDIDO_DB_PATH || path.join(userDataPath, 'tapedido.db')
 console.log('[db] dbPath:', dbPath)
 
 // Carrega o token salvo antes de qualquer chamada ao Supabase.
@@ -47,8 +56,11 @@ try {
   db.pragma('journal_mode = WAL')
   db.pragma('foreign_keys = ON')
 } catch (err) {
-  dialog.showErrorBox('Erro: SQLite', `Falha ao abrir o banco de dados:\n${dbPath}\n\n${err.message}\n\nStack:\n${err.stack}`)
-  process.exit(1)
+  if (dialog) {
+    dialog.showErrorBox('Erro: SQLite', `Falha ao abrir o banco de dados:\n${dbPath}\n\n${err.message}\n\nStack:\n${err.stack}`)
+    process.exit(1)
+  }
+  throw err
 }
 
 // ── Criação das tabelas ────────────────────────────────────────────────────

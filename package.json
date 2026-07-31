@@ -12,7 +12,9 @@
     "build:react": "vite build",
     "preview": "vite preview",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node electron/database/migrate.js"
+    "db:migrate": "node electron/database/migrate.js",
+    "test": "cross-env ELECTRON_RUN_AS_NODE=1 electron ./node_modules/vitest/vitest.mjs run",
+    "test:watch": "cross-env ELECTRON_RUN_AS_NODE=1 electron ./node_modules/vitest/vitest.mjs"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.0.5",
@@ -78,7 +80,10 @@
       "artifactName": "tapedido-food-setup-${version}.${ext}"
     },
     "extraResources": [
-      { "from": "assets/", "to": "assets/" }
+      {
+        "from": "assets/",
+        "to": "assets/"
+      }
     ],
     "linux": {
       "icon": "assets/icons"
@@ -97,13 +102,14 @@
     "@vitejs/plugin-react": "^4.2.1",
     "autoprefixer": "^10.4.17",
     "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
     "drizzle-kit": "^0.20.14",
     "electron": "^28.2.3",
     "electron-builder": "^24.9.1",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.1",
     "vite": "^5.1.1",
+    "vitest": "^1.6.1",
     "wait-on": "^7.2.0"
   }
 }
-

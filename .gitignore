@@ -36,3 +36,8 @@ Thumbs.db
 app-extracted*/
 app-verify/
 log*.txt
+
+# Banco criado ao rodar db.js fora do Electron (testes e scripts)
+tapedido.db
+tapedido.db-wal
+tapedido.db-shm
