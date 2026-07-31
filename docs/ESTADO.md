@@ -161,6 +161,31 @@ reescreveria o lucro de meses já fechados — sem volta.
 Efeito colateral bom: o alerta de estoque baixo do Dashboard já existia mas era
 letra morta, porque o estoque só mexia por lançamento manual. Agora ele vale.
 
+### Feature 5 — Entregadores e kanban de delivery (31/07)
+
+**Cadastro de entregadores** em Configurações → Entrega, junto das zonas: é a
+mesma decisão do lojista, na mesma tela. Backend ganhou `atualizar` e `deletar`
+(com whitelist de colunas, igual `pedidos.atualizar`).
+
+`deletar` **desativa, não apaga**. `pedidos.entregador_id` aponta para lá;
+apagar a linha faria o pedido antigo perder o nome de quem entregou. Por isso
+`listar()` devolve só os ativos por padrão e `listar(true)` inclui os inativos
+— é assim que a tela permite reativar quem voltou.
+
+**Kanban** substituiu a lista com filtros. Quatro colunas do fluxo (Novos,
+Preparando, Prontos, A Caminho); entregue e cancelado saem para a aba
+Finalizados, senão no fim do dia a tela vira uma parede de pedidos que ninguém
+precisa mais olhar. Pedido de mesa entra já como `entregue` e nunca aparece no
+fluxo.
+
+Cada card mostra **há quanto tempo está parado naquela etapa** — âmbar aos 15
+min, vermelho aos 30. É o número que evita o pedido esquecido; a hora de
+entrada não diz nada depois que o salão enche.
+
+Isso exigiu `pedidos.atualizar` carimbar `status_alterado_em` **só quando o
+status muda**. `atualizado_em` não serve: ele muda também ao trocar o
+entregador, e o cronômetro da etapa zeraria sem o pedido ter andado.
+
 ## 🚧 BLOQUEIO ATIVO — a virada da RLS depende de release publicada
 
 Descoberto ao testar: **o JWT do PDV não está na versão que os clientes têm.**

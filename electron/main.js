@@ -203,8 +203,10 @@ app.whenReady().then(() => {
   ipcMain.handle('fornecedores:atualizar', (_, dados) => db.fornecedores.atualizar(dados))
 
   // Entregadores
-  ipcMain.handle('entregadores:listar', () => db.entregadores.listar())
+  ipcMain.handle('entregadores:listar', (_, incluirInativos) => db.entregadores.listar(incluirInativos))
   ipcMain.handle('entregadores:criar', (_, dados) => db.entregadores.criar(dados))
+  ipcMain.handle('entregadores:atualizar', (_, dados) => db.entregadores.atualizar(dados))
+  ipcMain.handle('entregadores:deletar', (_, id) => db.entregadores.deletar(id))
 
   // Zonas de entrega
   ipcMain.handle('zonas:listar', () => db.zonas.listar())

@@ -51,6 +51,10 @@ function mockApi() {
   let produtos = [...mockProdutos]
   let pedidos = [...mockPedidos]
   let mesas = [...mockMesas]
+  let entregadores = [
+    { id: 1, nome: 'Carlos Moto', telefone: '(21) 99888-7766', veiculo: 'Moto Honda CG 160', placa: 'KXR-2B18', ativo: 1 },
+    { id: 2, nome: 'Pedro Bike', telefone: '(21) 99777-5544', veiculo: 'Bicicleta elétrica', placa: '', ativo: 1 },
+  ]
 
   return {
     licenca: {
@@ -94,7 +98,19 @@ function mockApi() {
     pedidos: {
       listar: async () => pedidos,
       criar: async (d) => { const n = { ...d, id: Date.now(), numero_pedido: pedidos.length + 1, status: 'recebido', criado_em: new Date().toISOString() }; pedidos.unshift(n); return n },
-      atualizar: async (d) => { const i = pedidos.findIndex(p => p.id === d.id); if (i >= 0) pedidos[i] = { ...pedidos[i], ...d }; return pedidos[i] },
+      atualizar: async (d) => {
+        const i = pedidos.findIndex(p => p.id === d.id)
+        if (i < 0) return null
+        // O Electron grava em snake_case e devolve a linha do banco. Sem traduzir
+        // aqui, a demo mostraria o pedido despachado sem o nome do entregador.
+        const { entregadorId, ...resto } = d
+        pedidos[i] = {
+          ...pedidos[i], ...resto,
+          ...(entregadorId !== undefined ? { entregador_id: entregadorId } : {}),
+          ...(d.status !== undefined ? { status_alterado_em: new Date().toISOString() } : {}),
+        }
+        return pedidos[i]
+      },
       getById: async (id) => pedidos.find(p => p.id === id),
       dashboard: async (periodo) => ({
         receitaHoje: periodo === '7dias' ? 2678.50 : periodo === '30dias' ? 11450.00 : 382.50,
@@ -145,11 +161,23 @@ function mockApi() {
       atualizar: async (d) => d,
     },
     entregadores: {
-      listar: async () => [
-        { id: 1, nome: 'Carlos Moto', telefone: '(21) 99888-7766', veiculo: 'Moto Honda CG 160' },
-        { id: 2, nome: 'Pedro Bike', telefone: '(21) 99777-5544', veiculo: 'Bicicleta elétrica' },
-      ],
-      criar: async (d) => ({ ...d, id: Date.now() }),
+      listar: async (incluirInativos) =>
+        entregadores.filter(e => incluirInativos || e.ativo !== 0),
+      criar: async (d) => {
+        const n = { ...d, id: Date.now(), ativo: 1 }
+        entregadores.push(n)
+        return n
+      },
+      atualizar: async (d) => {
+        const i = entregadores.findIndex(e => e.id === d.id)
+        if (i >= 0) entregadores[i] = { ...entregadores[i], ...d }
+        return entregadores[i]
+      },
+      deletar: async (id) => {
+        const i = entregadores.findIndex(e => e.id === id)
+        if (i >= 0) entregadores[i] = { ...entregadores[i], ativo: 0 }
+        return { sucesso: true }
+      },
     },
     zonas: {
       listar: async () => [

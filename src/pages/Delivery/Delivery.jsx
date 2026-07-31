@@ -18,15 +18,29 @@ const STATUS_INFO = {
   cancelado:  { label: 'Cancelado',  cor: 'bg-red-500/20 text-red-400 border-red-500/40' },
 }
 
-const FILTROS = [
-  { id: 'todos',      label: 'Todos',      status: null },
-  { id: 'recebido',   label: 'Novos',      status: 'recebido' },
-  { id: 'em_preparo', label: 'Preparando', status: 'em_preparo' },
-  { id: 'pronto',     label: 'Prontos',    status: 'pronto' },
-  { id: 'saiu',       label: 'A Caminho',  status: 'saiu' },
-  { id: 'entregue',   label: 'Entregues',  status: 'entregue' },
-  { id: 'cancelado',  label: 'Cancelados', status: 'cancelado' },
+// ─── Colunas do kanban ────────────────────────────────────────────────────────
+// Só o que está em andamento. Entregue e cancelado saem do fluxo e vão para a
+// aba de finalizados — se ficassem aqui, no fim do dia a tela seria uma parede
+// de pedidos que ninguém precisa mais olhar.
+const COLUNAS = [
+  { status: 'recebido',   label: 'Novos',      emoji: '🔔', destaque: true },
+  { status: 'em_preparo', label: 'Preparando', emoji: '🍳' },
+  { status: 'pronto',     label: 'Prontos',    emoji: '✅' },
+  { status: 'saiu',       label: 'A Caminho',  emoji: '🛵' },
 ]
+
+// Minutos parados na coluna atual a partir dos quais o pedido vira alerta.
+// Não é o tempo total prometido ao cliente: é quanto tempo uma etapa pode
+// ficar esquecida antes de virar problema.
+const MINUTOS_ATENCAO = 15
+const MINUTOS_ATRASO  = 30
+
+function minutosParado(pedido) {
+  const marco = pedido.status_alterado_em || pedido.criado_em
+  if (!marco) return 0
+  const ms = Date.now() - new Date(marco).getTime()
+  return ms > 0 ? Math.floor(ms / 60000) : 0
+}
 
 // ─── Próxima ação por status ──────────────────────────────────────────────────
 // Pedidos tipo 'mesa' entram direto como 'entregue' — sem botão de avanço.
@@ -59,7 +73,8 @@ function parsearEndereco(raw) {
 export default function Pedidos() {
   const [pedidos, setPedidos]             = useState([])
   const [carregando, setCarregando]       = useState(true)
-  const [filtro, setFiltro]               = useState('todos')
+  const [verFinalizados, setVerFinalizados] = useState(false)
+  const [, setAgora]                      = useState(Date.now())
   const [expandidos, setExpandidos]       = useState([])
   const [pedidoImpressao, setPedidoImpressao] = useState(null)
   const [loja, setLoja]                   = useState(null)
@@ -73,7 +88,10 @@ export default function Pedidos() {
     api.loja.get().then(setLoja).catch(() => {})
     api.entregadores.listar().then(setEntregadores).catch(() => setEntregadores([]))
     pollingRef.current = setInterval(carregar, 30000)
-    return () => clearInterval(pollingRef.current)
+    // O contador de minutos precisa andar sozinho. Sem isto, um pedido parado
+    // continuaria mostrando "2 min" ate alguem mexer na tela.
+    const relogio = setInterval(() => setAgora(Date.now()), 30000)
+    return () => { clearInterval(pollingRef.current); clearInterval(relogio) }
   }, [])
 
   async function carregar() {
@@ -144,9 +162,12 @@ export default function Pedidos() {
     return pedidos.filter(p => p.status === status).length
   }
 
-  const novos        = contarPorStatus('recebido')
-  const emAndamento  = pedidos.filter(p => !['entregue', 'cancelado'].includes(p.status)).length
-  const filtrados    = filtro === 'todos' ? pedidos : pedidos.filter(p => p.status === filtro)
+  const novos       = contarPorStatus('recebido')
+  const emAndamento = pedidos.filter(p => !['entregue', 'cancelado'].includes(p.status)).length
+
+  // Pedido de mesa entra ja como 'entregue': ele nunca passa pelo fluxo de
+  // delivery e so aparece na aba de finalizados.
+  const finalizados = pedidos.filter(p => ['entregue', 'cancelado'].includes(p.status))
 
   function imprimirCupom() {
     const styleId = 'print-cupom-style'
@@ -201,55 +222,98 @@ export default function Pedidos() {
         </button>
       </div>
 
-      {/* Filtros */}
-      <div className="flex flex-wrap gap-2 overflow-x-auto pb-1">
-        {FILTROS.map(f => {
-          const count = f.status ? contarPorStatus(f.status) : pedidos.length
-          const ativo = filtro === f.id
-          return (
-            <button
-              key={f.id}
-              onClick={() => setFiltro(f.id)}
-              className={`px-4 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 border ${
-                ativo
-                  ? 'bg-[#F97316] text-white border-[#F97316]'
-                  : 'bg-white/5 text-gray-400 hover:text-white border-white/10'
-              }`}
-            >
-              {f.label}
-              <span className={ativo ? 'opacity-70' : 'opacity-50'}>{count}</span>
-            </button>
-          )
-        })}
+      {/* Alternância fluxo / finalizados */}
+      <div className="flex gap-2">
+        {[
+          { id: false, label: 'Em andamento', count: emAndamento },
+          { id: true,  label: 'Finalizados',  count: finalizados.length },
+        ].map(t => (
+          <button
+            key={String(t.id)}
+            onClick={() => setVerFinalizados(t.id)}
+            className={`px-4 py-2 rounded-full text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 border ${
+              verFinalizados === t.id
+                ? 'bg-[#F97316] text-white border-[#F97316]'
+                : 'bg-white/5 text-gray-400 hover:text-white border-white/10'
+            }`}
+          >
+            {t.label}
+            <span className={verFinalizados === t.id ? 'opacity-70' : 'opacity-50'}>{t.count}</span>
+          </button>
+        ))}
       </div>
 
-      {/* Grid de cards */}
       {carregando ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array(6).fill(0).map((_, i) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {Array(8).fill(0).map((_, i) => (
             <div key={i} className="h-48 rounded-2xl animate-pulse bg-white/5" />
           ))}
         </div>
-      ) : filtrados.length === 0 ? (
-        <div className="text-center py-20 text-gray-500">
-          <div className="text-5xl mb-3">📋</div>
-          <p className="font-medium">Nenhum pedido encontrado</p>
-        </div>
+      ) : verFinalizados ? (
+        finalizados.length === 0 ? (
+          <VazioKanban texto="Nenhum pedido finalizado hoje" />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {finalizados.map(pedido => (
+              <CardPedido
+                key={pedido.id}
+                pedido={pedido}
+                expandido={expandidos.includes(pedido.id)}
+                proximaAcao={getProximaAcao(pedido)}
+                entregador={entregadores.find(e => e.id === pedido.entregador_id)}
+                onToggleExpand={() => toggleExpandido(pedido.id)}
+                onAtualizarStatus={avancarStatus}
+                onCancelar={() => cancelar(pedido)}
+                onImprimir={() => abrirImpressao(pedido)}
+              />
+            ))}
+          </div>
+        )
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filtrados.map(pedido => (
-            <CardPedido
-              key={pedido.id}
-              pedido={pedido}
-              expandido={expandidos.includes(pedido.id)}
-              proximaAcao={getProximaAcao(pedido)}
-              entregador={entregadores.find(e => e.id === pedido.entregador_id)}
-              onToggleExpand={() => toggleExpandido(pedido.id)}
-              onAtualizarStatus={avancarStatus}
-              onCancelar={() => cancelar(pedido)}
-              onImprimir={() => abrirImpressao(pedido)}
-            />
-          ))}
+        // Colunas roláveis na horizontal: em tela pequena o operador desliza em
+        // vez de perder as etapas finais fora do campo de visão.
+        <div className="flex gap-4 overflow-x-auto pb-2">
+          {COLUNAS.map(coluna => {
+            const daColuna = pedidos.filter(p => p.status === coluna.status)
+            return (
+              <div key={coluna.status} className="flex-1 min-w-[280px] flex flex-col gap-3">
+                <div
+                  className={`flex items-center justify-between px-3 py-2 rounded-xl border ${
+                    coluna.destaque && daColuna.length > 0
+                      ? 'bg-[#F97316]/15 border-[#F97316]/40'
+                      : 'bg-white/5 border-white/10'
+                  }`}
+                >
+                  <span className="text-xs font-bold text-white uppercase tracking-wide">
+                    {coluna.emoji} {coluna.label}
+                  </span>
+                  <span className={`text-xs font-black ${
+                    coluna.destaque && daColuna.length > 0 ? 'text-[#F97316]' : 'text-gray-500'
+                  }`}>
+                    {daColuna.length}
+                  </span>
+                </div>
+
+                {daColuna.length === 0 ? (
+                  <div className="rounded-2xl border border-dashed border-white/10 py-8 text-center text-xs text-gray-600">
+                    Vazio
+                  </div>
+                ) : daColuna.map(pedido => (
+                  <CardPedido
+                    key={pedido.id}
+                    pedido={pedido}
+                    expandido={expandidos.includes(pedido.id)}
+                    proximaAcao={getProximaAcao(pedido)}
+                    entregador={entregadores.find(e => e.id === pedido.entregador_id)}
+                    onToggleExpand={() => toggleExpandido(pedido.id)}
+                    onAtualizarStatus={avancarStatus}
+                    onCancelar={() => cancelar(pedido)}
+                    onImprimir={() => abrirImpressao(pedido)}
+                  />
+                ))}
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -283,6 +347,46 @@ export default function Pedidos() {
           onFechar={() => setPedidoParaEnviar(null)}
         />
       )}
+    </div>
+  )
+}
+
+// Quanto tempo o pedido está parado nesta etapa. É o número que evita o pedido
+// esquecido: a hora de entrada não diz nada depois que o salão enche.
+function TempoParado({ pedido, hora }) {
+  const finalizado = ['entregue', 'cancelado'].includes(pedido.status)
+  if (finalizado) {
+    return (
+      <div className="flex items-center gap-1 text-gray-500 text-xs shrink-0">
+        <Clock size={10} />
+        <span>{hora}</span>
+      </div>
+    )
+  }
+
+  const min = minutosParado(pedido)
+  const cor = min >= MINUTOS_ATRASO
+    ? 'bg-red-500/20 text-red-400 border-red-500/40'
+    : min >= MINUTOS_ATENCAO
+      ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+      : 'text-gray-500 border-transparent'
+
+  return (
+    <div
+      className={`flex items-center gap-1 text-xs shrink-0 px-1.5 py-0.5 rounded-md border font-medium ${cor}`}
+      title={`Nesta etapa desde ${hora}`}
+    >
+      <Clock size={10} />
+      <span>{min < 1 ? 'agora' : `${min} min`}</span>
+    </div>
+  )
+}
+
+function VazioKanban({ texto }) {
+  return (
+    <div className="text-center py-20 text-gray-500">
+      <div className="text-5xl mb-3">📋</div>
+      <p className="font-medium">{texto}</p>
     </div>
   )
 }
@@ -358,10 +462,7 @@ function CardPedido({ pedido, expandido, proximaAcao, entregador, onToggleExpand
               </p>
             )}
           </div>
-          <div className="flex items-center gap-1 text-gray-500 text-xs shrink-0">
-            <Clock size={10} />
-            <span>{hora}</span>
-          </div>
+          <TempoParado pedido={pedido} hora={hora} />
         </div>
 
         {/* Itens */}

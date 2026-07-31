@@ -1297,6 +1297,14 @@ const dbModule = {
         return db.prepare('SELECT * FROM pedidos WHERE id = ?').get(id)
       }
 
+      // Carimba quando o status mudou, nao so quando a linha mudou. E o que
+      // permite mostrar ha quanto tempo o pedido esta parado na coluna atual —
+      // `atualizado_em` nao serve, porque muda tambem ao trocar o entregador.
+      if (rest.status !== undefined) {
+        colunas.push('status_alterado_em = ?')
+        valores.push(agora())
+      }
+
       db.prepare(`UPDATE pedidos SET ${colunas.join(', ')}, atualizado_em = ? WHERE id = ?`)
         .run(...valores, agora(), id)
       return db.prepare('SELECT * FROM pedidos WHERE id = ?').get(id)
@@ -1598,14 +1606,46 @@ const dbModule = {
 
   // ── Entregadores ───────────────────────────────────────────────────────────
   entregadores: {
-    listar() {
-      return db.prepare('SELECT * FROM entregadores WHERE ativo = 1 ORDER BY nome').all()
+    // Por padrao so os ativos: quem chama de dentro da tela de pedidos quer a
+    // lista de quem pode sair agora. A tela de cadastro pede os inativos junto.
+    listar(incluirInativos = false) {
+      const filtro = incluirInativos ? '' : 'WHERE ativo = 1'
+      return db.prepare(`SELECT * FROM entregadores ${filtro} ORDER BY ativo DESC, nome`).all()
     },
     criar(dados) {
       const result = db.prepare(`
-        INSERT INTO entregadores (nome, telefone, veiculo, ativo) VALUES (?, ?, ?, 1)
-      `).run(dados.nome, dados.telefone || '', dados.veiculo || '')
+        INSERT INTO entregadores (nome, telefone, veiculo, placa, ativo) VALUES (?, ?, ?, ?, 1)
+      `).run(dados.nome, dados.telefone || '', dados.veiculo || '', dados.placa || '')
       return db.prepare('SELECT * FROM entregadores WHERE id = ?').get(result.lastInsertRowid)
+    },
+    atualizar(dados) {
+      const { id, ...rest } = dados
+      // Mesma whitelist de `pedidos.atualizar`, pelo mesmo motivo: sem ela o
+      // nome da coluna vem do renderer e entra cru na query.
+      const map = { nome: 'nome', telefone: 'telefone', veiculo: 'veiculo', placa: 'placa', ativo: 'ativo' }
+
+      const colunas = []
+      const valores = []
+      for (const [chave, valor] of Object.entries(rest)) {
+        const coluna = map[chave]
+        if (!coluna) {
+          console.warn('[entregadores.atualizar] campo ignorado (nao permitido):', chave)
+          continue
+        }
+        colunas.push(`${coluna} = ?`)
+        valores.push(valor)
+      }
+      if (colunas.length === 0) return db.prepare('SELECT * FROM entregadores WHERE id = ?').get(id)
+
+      valores.push(id)
+      db.prepare(`UPDATE entregadores SET ${colunas.join(', ')} WHERE id = ?`).run(...valores)
+      return db.prepare('SELECT * FROM entregadores WHERE id = ?').get(id)
+    },
+    // Desativa em vez de apagar: `pedidos.entregador_id` aponta para ca, e
+    // remover a linha faria o historico perder o nome de quem entregou.
+    deletar(id) {
+      db.prepare('UPDATE entregadores SET ativo = 0 WHERE id = ?').run(id)
+      return { sucesso: true }
     },
   },
 

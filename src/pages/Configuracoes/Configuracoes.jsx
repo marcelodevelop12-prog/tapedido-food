@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Save, Plus, Trash2, RefreshCw, Store, Printer, Truck, Info, ShoppingCart, MessageCircle, Pencil, X, Copy, Wifi, WifiOff, Smartphone } from 'lucide-react'
+import { Save, Plus, Trash2, RefreshCw, Store, Printer, Truck, Info, ShoppingCart, MessageCircle, Pencil, X, Copy, Wifi, WifiOff, Smartphone, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '../../lib/api'
 
@@ -34,6 +34,10 @@ export default function Configuracoes() {
   const [modalZona, setModalZona] = useState(null) // null | { modo: 'add' | 'edit', zona?: {} }
   const [formZona, setFormZona] = useState({ bairro: '', municipio: '', taxa_entrega: '' })
   const [salvandoZona, setSalvandoZona] = useState(false)
+  const [entregadores, setEntregadores] = useState([])
+  const [modalEntregador, setModalEntregador] = useState(null) // null | { modo: 'add' | 'edit', entregador?: {} }
+  const [formEntregador, setFormEntregador] = useState({ nome: '', telefone: '', veiculo: '', placa: '' })
+  const [salvandoEntregador, setSalvandoEntregador] = useState(false)
 
   // App Garçom
   const [garcons, setGarcons] = useState([])
@@ -91,16 +95,19 @@ export default function Configuracoes() {
 
   async function carregar() {
     try {
-      const [l, c, z, lic] = await Promise.all([
+      const [l, c, z, lic, ent] = await Promise.all([
         api.loja.get(),
         api.config.get(),
         api.zonas.listar(),
         api.licenca.info(),
+        // Inclui os desativados: e aqui que o lojista reativa quem voltou.
+        api.entregadores.listar(true).catch(() => []),
       ])
       setLoja(l || {})
       setConfig(c || {})
       setZonas(z)
       setLicenca(lic)
+      setEntregadores(ent || [])
     } finally {
       setCarregando(false)
     }
@@ -196,6 +203,60 @@ export default function Configuracoes() {
       setZonas(prev => prev.filter(z => z.id !== id))
       toast.success('Zona removida!')
     } catch { toast.error('Erro ao remover') }
+  }
+
+  function abrirEntregadorAdicionar() {
+    setFormEntregador({ nome: '', telefone: '', veiculo: '', placa: '' })
+    setModalEntregador({ modo: 'add' })
+  }
+
+  function abrirEntregadorEditar(entregador) {
+    setFormEntregador({
+      nome: entregador.nome || '',
+      telefone: entregador.telefone || '',
+      veiculo: entregador.veiculo || '',
+      placa: entregador.placa || '',
+    })
+    setModalEntregador({ modo: 'edit', entregador })
+  }
+
+  async function salvarEntregador(e) {
+    e.preventDefault()
+    if (!formEntregador.nome.trim()) { toast.error('Informe o nome do entregador'); return }
+    const dados = {
+      nome: formEntregador.nome.trim(),
+      telefone: formEntregador.telefone.trim(),
+      veiculo: formEntregador.veiculo.trim(),
+      placa: formEntregador.placa.trim().toUpperCase(),
+    }
+    setSalvandoEntregador(true)
+    try {
+      if (modalEntregador.modo === 'add') {
+        const novo = await api.entregadores.criar(dados)
+        setEntregadores(prev => [...prev, novo])
+        toast.success('Entregador cadastrado!')
+      } else {
+        const atualizado = await api.entregadores.atualizar({ id: modalEntregador.entregador.id, ...dados })
+        setEntregadores(prev => prev.map(x => x.id === atualizado.id ? atualizado : x))
+        toast.success('Entregador atualizado!')
+      }
+      setModalEntregador(null)
+    } catch { toast.error('Erro ao salvar entregador') }
+    finally { setSalvandoEntregador(false) }
+  }
+
+  async function alternarEntregadorAtivo(entregador) {
+    const desativando = entregador.ativo !== 0
+    if (desativando && !window.confirm(`Desativar ${entregador.nome}? Ele deixa de aparecer na hora de despachar pedidos.`)) return
+    try {
+      // Desativa em vez de apagar: os pedidos ja entregues apontam para ele e
+      // perderiam o nome de quem levou.
+      const atualizado = desativando
+        ? (await api.entregadores.deletar(entregador.id), { ...entregador, ativo: 0 })
+        : await api.entregadores.atualizar({ id: entregador.id, ativo: 1 })
+      setEntregadores(prev => prev.map(x => x.id === entregador.id ? atualizado : x))
+      toast.success(desativando ? 'Entregador desativado' : 'Entregador reativado')
+    } catch { toast.error('Erro ao alterar entregador') }
   }
 
   async function carregarPortas() {
@@ -573,6 +634,57 @@ export default function Configuracoes() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-semibold text-gray-800">Entregadores</h3>
+              <button onClick={abrirEntregadorAdicionar} className="flex items-center gap-1.5 text-sm text-orange-600 hover:text-orange-700 font-medium">
+                <Plus size={15} />
+                Adicionar Entregador
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mb-4">
+              Quem estiver aqui aparece na hora de despachar um pedido para entrega.
+            </p>
+            {entregadores.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">Nenhum entregador cadastrado</p>
+            ) : (
+              <div className="space-y-2">
+                {entregadores.map(ent => {
+                  const inativo = ent.ativo === 0
+                  return (
+                    <div key={ent.id} className={`flex items-center justify-between rounded-lg px-3 py-2.5 ${inativo ? 'bg-gray-50 opacity-60' : 'bg-gray-50'}`}>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-800 text-sm">{ent.nome}</span>
+                          {inativo && <span className="text-[10px] uppercase font-bold text-gray-500 bg-gray-200 px-1.5 py-0.5 rounded">Inativo</span>}
+                        </div>
+                        <p className="text-xs text-gray-400 truncate">
+                          {[ent.telefone, ent.veiculo, ent.placa].filter(Boolean).join(' · ') || 'Sem dados de contato'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => abrirEntregadorEditar(ent)}
+                          className="text-gray-400 hover:text-blue-600 p-1 rounded transition-colors"
+                          title="Editar entregador"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          onClick={() => alternarEntregadorAtivo(ent)}
+                          className={`text-gray-400 p-1 rounded transition-colors ${inativo ? 'hover:text-green-600' : 'hover:text-red-600'}`}
+                          title={inativo ? 'Reativar entregador' : 'Desativar entregador'}
+                        >
+                          {inativo ? <RotateCcw size={14} /> : <Trash2 size={14} />}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -1046,6 +1158,87 @@ export default function Configuracoes() {
                   className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
                 >
                   {salvandoZona ? 'Salvando...' : modalZona.modo === 'add' ? 'Adicionar' : 'Salvar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {modalEntregador && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-bold text-gray-800 text-lg">
+                {modalEntregador.modo === 'add' ? 'Adicionar Entregador' : 'Editar Entregador'}
+              </h3>
+              <button onClick={() => setModalEntregador(null)} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={salvarEntregador} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome *</label>
+                <input
+                  type="text"
+                  value={formEntregador.nome}
+                  onChange={e => setFormEntregador(p => ({ ...p, nome: e.target.value }))}
+                  placeholder="Ex: Carlos"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Telefone</label>
+                <input
+                  type="text"
+                  value={formEntregador.telefone}
+                  onChange={e => setFormEntregador(p => ({ ...p, telefone: e.target.value }))}
+                  placeholder="(21) 99999-0000"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Veículo</label>
+                  <input
+                    type="text"
+                    value={formEntregador.veiculo}
+                    onChange={e => setFormEntregador(p => ({ ...p, veiculo: e.target.value }))}
+                    placeholder="Ex: Moto CG 160"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Placa</label>
+                  <input
+                    type="text"
+                    value={formEntregador.placa}
+                    onChange={e => setFormEntregador(p => ({ ...p, placa: e.target.value.toUpperCase() }))}
+                    placeholder="ABC-1D23"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setModalEntregador(null)}
+                  className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={salvandoEntregador}
+                  className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                >
+                  {salvandoEntregador ? 'Salvando...' : modalEntregador.modo === 'add' ? 'Adicionar' : 'Salvar'}
                 </button>
               </div>
             </form>

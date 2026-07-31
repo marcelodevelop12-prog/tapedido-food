@@ -111,8 +111,10 @@ contextBridge.exposeInMainWorld('api', {
 
   // Entregadores
   entregadores: {
-    listar: () => invoke('entregadores:listar'),
+    listar: (incluirInativos) => invoke('entregadores:listar', incluirInativos),
     criar: (dados) => invoke('entregadores:criar', dados),
+    atualizar: (dados) => invoke('entregadores:atualizar', dados),
+    deletar: (id) => invoke('entregadores:deletar', id),
   },
 
   // Zonas
