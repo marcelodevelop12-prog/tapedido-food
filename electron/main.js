@@ -110,8 +110,10 @@ app.whenReady().then(() => {
   ipcMain.handle('produtos:buscarPorCodigoBarras', (_, codigo) => db.produtos.buscarPorCodigoBarras(codigo))
 
   // Categorias
-  ipcMain.handle('categorias:listar', () => db.categorias.listar())
+  ipcMain.handle('categorias:listar', (_, incluirInativas) => db.categorias.listar(incluirInativas))
   ipcMain.handle('categorias:criar', (_, dados) => db.categorias.criar(dados))
+  ipcMain.handle('categorias:atualizar', (_, dados) => db.categorias.atualizar(dados))
+  ipcMain.handle('categorias:deletar', (_, id) => db.categorias.deletar(id))
 
   // Mesas
   ipcMain.handle('mesas:listar', () => db.mesas.listar())
@@ -218,6 +220,7 @@ app.whenReady().then(() => {
   ipcMain.handle('relatorios:vendas', (_, periodo) => db.relatorios.vendas(periodo))
   ipcMain.handle('relatorios:produtosMaisVendidos', (_, periodo) => db.relatorios.produtosMaisVendidos(periodo))
   ipcMain.handle('relatorios:estoque', () => db.relatorios.estoque())
+  ipcMain.handle('relatorios:custoLucro', (_, periodo) => db.relatorios.custoLucro(periodo))
 
   // Configurações
   ipcMain.handle('config:get', () => db.config.get())

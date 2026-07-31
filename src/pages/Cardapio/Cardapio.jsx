@@ -1,14 +1,10 @@
 import React, { useEffect, useState } from 'react'
-import { Plus, Search, Edit2, Trash2, ToggleLeft, ToggleRight, ChevronDown } from 'lucide-react'
+import { Plus, Search, Edit2, Trash2, ToggleLeft, ToggleRight, ChevronDown, Tags } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '../../lib/api'
 import { formatarMoeda } from '../../lib/utils'
 import FormProduto from './FormProduto'
-
-const CATEGORIAS_ICONE = {
-  'Lanches': '🍔', 'Pratos': '🍽️', 'Pizzas': '🍕',
-  'Bebidas': '🥤', 'Sobremesas': '🍨',
-}
+import ModalCategorias from './ModalCategorias'
 
 export default function Cardapio() {
   const [produtos, setProdutos] = useState([])
@@ -17,19 +13,32 @@ export default function Cardapio() {
   const [mostrarForm, setMostrarForm] = useState(false)
   const [produtoEditando, setProdutoEditando] = useState(null)
   const [carregando, setCarregando] = useState(true)
+  const [cadastradas, setCadastradas] = useState([])
+  const [mostrarCategorias, setMostrarCategorias] = useState(false)
 
   useEffect(() => { carregar() }, [])
 
   async function carregar() {
     try {
-      const data = await api.produtos.listar()
+      const [data, cats] = await Promise.all([
+        api.produtos.listar(),
+        api.categorias.listar().catch(() => []),
+      ])
       setProdutos(data)
+      setCadastradas(cats || [])
     } finally {
       setCarregando(false)
     }
   }
 
-  const categorias = ['Todos', ...new Set(produtos.map(p => p.categoria).filter(Boolean))]
+  const iconePorNome = Object.fromEntries(cadastradas.map(c => [c.nome, c.icone || '']))
+
+  // Categoria cadastrada sem produto ainda também aparece no filtro: sem isso,
+  // criar uma categoria nova daria a impressão de que não funcionou.
+  const categorias = ['Todos', ...new Set([
+    ...cadastradas.map(c => c.nome),
+    ...produtos.map(p => p.categoria).filter(Boolean),
+  ])]
 
   const produtosFiltrados = produtos.filter(p => {
     const matchBusca = !busca || p.nome.toLowerCase().includes(busca.toLowerCase())
@@ -88,13 +97,22 @@ export default function Cardapio() {
           <h2 className="text-xl font-bold text-gray-800">Cardápio</h2>
           <p className="text-sm text-gray-500">{produtos.length} produtos cadastrados</p>
         </div>
-        <button
-          onClick={() => { setProdutoEditando(null); setMostrarForm(true) }}
-          className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-        >
-          <Plus size={18} />
-          Novo Produto
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setMostrarCategorias(true)}
+            className="flex items-center gap-2 border border-gray-200 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg font-medium transition-colors"
+          >
+            <Tags size={18} />
+            Categorias
+          </button>
+          <button
+            onClick={() => { setProdutoEditando(null); setMostrarForm(true) }}
+            className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+          >
+            <Plus size={18} />
+            Novo Produto
+          </button>
+        </div>
       </div>
 
       {/* Filtros */}
@@ -119,7 +137,7 @@ export default function Cardapio() {
                   : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
               }`}
             >
-              {CATEGORIAS_ICONE[cat] || ''} {cat}
+              {iconePorNome[cat] || ''} {cat}
             </button>
           ))}
         </div>
@@ -207,6 +225,15 @@ export default function Cardapio() {
           produto={produtoEditando}
           onSalvar={salvarProduto}
           onFechar={() => { setMostrarForm(false); setProdutoEditando(null) }}
+        />
+      )}
+
+      {mostrarCategorias && (
+        <ModalCategorias
+          onFechar={() => setMostrarCategorias(false)}
+          // Renomear categoria reescreve a dos produtos: a lista precisa ser
+          // relida, senao o filtro continuaria mostrando o nome antigo.
+          onAlterou={carregar}
         />
       )}
     </div>

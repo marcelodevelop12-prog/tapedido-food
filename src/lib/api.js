@@ -51,6 +51,7 @@ function mockApi() {
   let produtos = [...mockProdutos]
   let pedidos = [...mockPedidos]
   let mesas = [...mockMesas]
+  let categorias = mockCategorias.map(c => ({ ...c, ativo: 1 }))
   let entregadores = [
     { id: 1, nome: 'Carlos Moto', telefone: '(21) 99888-7766', veiculo: 'Moto Honda CG 160', placa: 'KXR-2B18', ativo: 1 },
     { id: 2, nome: 'Pedro Bike', telefone: '(21) 99777-5544', veiculo: 'Bicicleta elétrica', placa: '', ativo: 1 },
@@ -78,8 +79,34 @@ function mockApi() {
       buscarPorCodigoBarras: async (codigo) => produtos.find(p => p.codigo_barras === String(codigo).trim()) || null,
     },
     categorias: {
-      listar: async () => mockCategorias,
-      criar: async (d) => ({ ...d, id: Date.now() }),
+      listar: async (incluirInativas) =>
+        categorias.filter(c => incluirInativas || c.ativo !== 0),
+      criar: async (d) => {
+        const n = { ...d, id: Date.now(), ativo: 1, ordem: categorias.length + 1 }
+        categorias.push(n)
+        return n
+      },
+      atualizar: async (d) => {
+        const i = categorias.findIndex(c => c.id === d.id)
+        if (i < 0) return null
+        const antiga = categorias[i].nome
+        categorias[i] = { ...categorias[i], ...d }
+        // Espelha o backend: renomear a categoria reescreve a dos produtos.
+        if (d.nome && d.nome !== antiga) {
+          produtos.forEach(p => { if (p.categoria === antiga) p.categoria = d.nome })
+        }
+        return categorias[i]
+      },
+      deletar: async (id) => {
+        const cat = categorias.find(c => c.id === id)
+        if (!cat) return { sucesso: false, erro: 'Categoria nao encontrada' }
+        const emUso = produtos.filter(p => p.categoria === cat.nome).length
+        if (emUso > 0) {
+          return { sucesso: false, erro: `${emUso} produto(s) ainda usam "${cat.nome}". Mude a categoria deles primeiro.` }
+        }
+        categorias = categorias.filter(c => c.id !== id)
+        return { sucesso: true }
+      },
     },
     mesas: {
       listar: async () => mesas,
@@ -210,6 +237,36 @@ function mockApi() {
         { nome_item: 'X-Burguer', total_vendido: 40, receita: 720 },
       ],
       estoque: async () => produtos,
+      // Deriva dos mesmos produtos e vendas fictícios, para a demo mostrar
+      // margens plausíveis em vez de números soltos.
+      custoLucro: async () => {
+        const vendidos = [
+          ['X-Bacon', 48], ['Pizza Calabresa', 35], ['Batata Frita', 52],
+          ['Coca-Cola 350ml', 98], ['X-Burguer', 40],
+        ]
+        const itens = vendidos.map(([nome, quantidade]) => {
+          const p = produtos.find(x => x.nome === nome) || { preco: 0, custo_unitario: 0 }
+          const receita = p.preco * quantidade
+          const custo = (p.custo_unitario || 0) * quantidade
+          const lucro = receita - custo
+          return {
+            nome_item: nome, quantidade, receita, custo, lucro,
+            margem: receita > 0 ? (lucro / receita) * 100 : 0,
+            semCusto: !p.custo_unitario,
+          }
+        }).sort((a, b) => b.lucro - a.lucro)
+
+        const receita = itens.reduce((a, i) => a + i.receita, 0)
+        const custo = itens.reduce((a, i) => a + i.custo, 0)
+        return {
+          itens,
+          totais: {
+            receita, custo, lucro: receita - custo,
+            margem: receita > 0 ? ((receita - custo) / receita) * 100 : 0,
+            produtosSemCusto: itens.filter(i => i.semCusto).length,
+          },
+        }
+      },
     },
     config: {
       get: async () => ({ tempo_entrega_min: 40, tempo_retirada_min: 20, pedido_minimo: 20, impressora_largura: '80mm', aceitar_dinheiro: 1, aceitar_pix: 1, aceitar_debito: 1, aceitar_credito: 1, supabase_loja_id: null, codigo_loja: 'DEMO01' }),

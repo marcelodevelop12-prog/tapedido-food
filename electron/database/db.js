@@ -423,6 +423,21 @@ try {
     WHERE codigo_barras IS NOT NULL AND codigo_barras != ''`)
 } catch {}
 
+// A tabela `categorias` existia desde sempre mas nunca era preenchida — o
+// cardapio usava uma lista fixa no codigo. Semear com essa mesma lista faz a
+// tela passar a ler do banco sem o lojista perceber diferenca no primeiro dia.
+try {
+  const vazia = (db.prepare('SELECT COUNT(*) as n FROM categorias').get()?.n ?? 0) === 0
+  if (vazia) {
+    const inserir = db.prepare('INSERT INTO categorias (nome, icone, ordem, ativo) VALUES (?, ?, ?, 1)')
+    const padrao = [
+      ['Lanches', '🍔'], ['Pratos', '🍽️'], ['Pizzas', '🍕'],
+      ['Bebidas', '🥤'], ['Sobremesas', '🍰'], ['Outros', '📦'],
+    ]
+    db.transaction(() => padrao.forEach(([nome, icone], i) => inserir.run(nome, icone, i + 1)))()
+  }
+} catch {}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 const agora = () => new Date().toISOString()
 
@@ -1036,14 +1051,70 @@ const dbModule = {
 
   // ── Categorias ────────────────────────────────────────────────────────────
   categorias: {
-    listar() {
-      return db.prepare('SELECT * FROM categorias WHERE ativo = 1 ORDER BY ordem, nome').all()
+    listar(incluirInativas = false) {
+      const filtro = incluirInativas ? '' : 'WHERE ativo = 1'
+      return db.prepare(`SELECT * FROM categorias ${filtro} ORDER BY ativo DESC, ordem, nome`).all()
     },
     criar(dados) {
+      const nome = String(dados.nome || '').trim()
+      if (!nome) throw new Error('categorias.criar: nome e obrigatorio')
+
+      // Ordem no fim da lista quando nao informada, senao toda categoria nova
+      // nasceria com 0 e brigaria com as existentes pelo primeiro lugar.
+      const ordem = dados.ordem ?? ((db.prepare('SELECT MAX(ordem) as m FROM categorias').get()?.m ?? 0) + 1)
+
       const result = db.prepare(`
         INSERT INTO categorias (nome, icone, ordem, ativo) VALUES (?, ?, ?, 1)
-      `).run(dados.nome, dados.icone || '', dados.ordem || 0)
+      `).run(nome, dados.icone || '', ordem)
       return db.prepare('SELECT * FROM categorias WHERE id = ?').get(result.lastInsertRowid)
+    },
+    /**
+     * Renomear tambem reescreve os produtos daquela categoria.
+     *
+     * `menu_items.categoria` guarda o NOME, nao o id. Sem reescrever, renomear
+     * "Lanches" para "Sanduiches" deixaria todo produto apontando para uma
+     * categoria que nao existe mais — eles sumiriam dos filtros do cardapio.
+     */
+    atualizar(dados) {
+      const atual = db.prepare('SELECT * FROM categorias WHERE id = ?').get(dados.id)
+      if (!atual) return null
+
+      const nome = dados.nome !== undefined ? String(dados.nome).trim() : atual.nome
+      if (!nome) throw new Error('categorias.atualizar: nome nao pode ficar vazio')
+
+      const aplicar = db.transaction(() => {
+        db.prepare('UPDATE categorias SET nome = ?, icone = ?, ordem = ?, ativo = ? WHERE id = ?').run(
+          nome,
+          dados.icone !== undefined ? dados.icone : atual.icone,
+          dados.ordem !== undefined ? dados.ordem : atual.ordem,
+          dados.ativo !== undefined ? (dados.ativo ? 1 : 0) : atual.ativo,
+          dados.id
+        )
+        if (nome !== atual.nome) {
+          db.prepare('UPDATE menu_items SET categoria = ? WHERE categoria = ?').run(nome, atual.nome)
+        }
+      })
+      aplicar()
+
+      return db.prepare('SELECT * FROM categorias WHERE id = ?').get(dados.id)
+    },
+    // Desativa em vez de apagar: os produtos guardam o nome da categoria, e
+    // sumir com a linha nao apagaria a referencia — so tiraria o nome da lista
+    // sem tirar do produto.
+    deletar(id) {
+      const cat = db.prepare('SELECT * FROM categorias WHERE id = ?').get(id)
+      if (!cat) return { sucesso: false, erro: 'Categoria nao encontrada' }
+
+      const emUso = db.prepare('SELECT COUNT(*) as n FROM menu_items WHERE categoria = ?').get(cat.nome)?.n ?? 0
+      if (emUso > 0) {
+        return {
+          sucesso: false,
+          erro: `${emUso} produto(s) ainda usam "${cat.nome}". Mude a categoria deles primeiro.`,
+        }
+      }
+
+      db.prepare('UPDATE categorias SET ativo = 0 WHERE id = ?').run(id)
+      return { sucesso: true }
     },
   },
 
@@ -1695,6 +1766,10 @@ const dbModule = {
           WHERE criado_em BETWEEN ? AND ?
             AND status IN ('entregue', 'concluido', 'pronto', 'saiu', 'em_preparo', 'recebido')
             AND status != 'cancelado'
+            -- Mesa entra pelo UNION abaixo, via caixa_movimentacoes. Sem este
+            -- filtro toda venda de salao aparece em dobro no relatorio — era o
+            -- caso ate 31/07/2026. O dashboard ja excluia; aqui faltava.
+            AND tipo_entrega != 'mesa'
           GROUP BY ${groupBy}
           UNION ALL
           SELECT ${groupBy} as periodo,
@@ -1723,6 +1798,55 @@ const dbModule = {
       return db.prepare(`
         SELECT *, (estoque_atual * custo_unitario) as valor_estoque FROM menu_items ORDER BY nome
       `).all()
+    },
+    /**
+     * Custo x lucro por produto no periodo.
+     *
+     * O custo vem de `itens_pedido.custo_unitario`, congelado no momento da
+     * venda — nao do cadastro atual do produto. E o que impede uma alta do
+     * fornecedor de reescrever o lucro de meses ja fechados.
+     *
+     * Diferente de `vendas()`, aqui a mesa entra: itens de mesa estao em
+     * `itens_pedido` e nao tem segunda fonte, entao nao ha o que duplicar.
+     */
+    custoLucro(periodo) {
+      const itens = db.prepare(`
+        SELECT ip.nome_item,
+          SUM(ip.quantidade) as quantidade,
+          SUM(ip.subtotal) as receita,
+          SUM(COALESCE(ip.custo_unitario, 0) * ip.quantidade) as custo,
+          SUM(CASE WHEN COALESCE(ip.custo_unitario, 0) = 0 THEN ip.quantidade ELSE 0 END) as qtd_sem_custo
+        FROM itens_pedido ip
+        JOIN pedidos p ON p.id = ip.pedido_id
+        WHERE p.criado_em BETWEEN ? AND ? AND p.status != 'cancelado'
+        GROUP BY ip.nome_item
+        ORDER BY (SUM(ip.subtotal) - SUM(COALESCE(ip.custo_unitario, 0) * ip.quantidade)) DESC
+      `).all(periodo.inicio, periodo.fim)
+
+      const comMargem = itens.map((i) => {
+        const lucro = (i.receita || 0) - (i.custo || 0)
+        return {
+          ...i,
+          lucro,
+          margem: i.receita > 0 ? (lucro / i.receita) * 100 : 0,
+          // Produto sem custo cadastrado aparece como lucro = receita, o que e
+          // mentira. A tela precisa poder avisar em vez de exibir o numero seco.
+          semCusto: (i.qtd_sem_custo || 0) > 0,
+        }
+      })
+
+      const receita = comMargem.reduce((a, i) => a + (i.receita || 0), 0)
+      const custo = comMargem.reduce((a, i) => a + (i.custo || 0), 0)
+      const lucro = receita - custo
+
+      return {
+        itens: comMargem,
+        totais: {
+          receita, custo, lucro,
+          margem: receita > 0 ? (lucro / receita) * 100 : 0,
+          produtosSemCusto: comMargem.filter(i => i.semCusto).length,
+        },
+      }
     },
   },
 

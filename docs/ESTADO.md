@@ -186,6 +186,32 @@ Isso exigiu `pedidos.atualizar` carimbar `status_alterado_em` **só quando o
 status muda**. `atualizado_em` não serve: ele muda também ao trocar o
 entregador, e o cronômetro da etapa zeraria sem o pedido ter andado.
 
+### Feature 6 — Categorias, custo × lucro e PDF (31/07)
+
+**Bug de dinheiro encontrado e corrigido.** `relatorios.vendas` somava pedidos
+*e* `caixa_movimentacoes`, mas — ao contrário do dashboard — não excluía
+`tipo_entrega = 'mesa'`. Toda venda de salão aparecia **em dobro** no relatório.
+Uma venda de R$ 60 virava R$ 120. Provado com teste antes de corrigir; o teste
+ficou.
+
+**Custo × lucro** (`relatorios.custoLucro`) usa o `custo_unitario` congelado em
+`itens_pedido` pela Feature 4, não o cadastro atual. Mesa entra aqui (itens de
+mesa só existem em `itens_pedido`, não há segunda fonte para duplicar).
+Produto sem custo cadastrado é marcado: senão o lucro sairia igual à receita e
+o lojista formaria preço em cima de um número inflado.
+
+**PDF** passou a exportar a aba aberta. Antes o botão gerava sempre a tabela de
+vendas — pedir o relatório de estoque devolvia o de vendas, sem aviso.
+
+**Categorias** deixaram de ser lista fixa no código. A tabela `categorias` já
+existia e nunca era usada; agora é semeada com as mesmas 6 categorias que
+estavam no código, então o primeiro dia é idêntico para quem já usa.
+
+Renomear reescreve a categoria dos produtos, porque `menu_items.categoria`
+guarda o **nome**, não o id — sem isso os produtos apontariam para uma
+categoria inexistente e sumiriam dos filtros. Remover é recusado enquanto
+houver produto usando, com a contagem na mensagem.
+
 ## 🚧 BLOQUEIO ATIVO — a virada da RLS depende de release publicada
 
 Descoberto ao testar: **o JWT do PDV não está na versão que os clientes têm.**

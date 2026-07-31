@@ -39,6 +39,20 @@ caixa *e* vira um registro em `pedidos`. Os dois precisam acontecer. O bug que
 escondeu meses de venda de salão foi o segundo caminho falhando em silêncio,
 engolido por um `catch` vazio.
 
+**O filtro de mesa vale para todo relatório de receita, não só o dashboard.**
+`relatorios.vendas` tem o mesmo `UNION` de duas fontes e precisou do mesmo
+`tipo_entrega != 'mesa'` — faltava, e o salão saía em dobro. Ao criar qualquer
+consulta nova de receita, decidir explicitamente de qual das duas fontes ela
+vem. Já `relatorios.custoLucro` lê só `itens_pedido`, onde mesa não duplica.
+
+**`itens_pedido.custo_unitario` é congelado na venda.** O relatório de lucro lê
+dele, nunca de `menu_items.custo_unitario`. Ler o custo atual faria uma
+mudança de preço do fornecedor reescrever o lucro de meses já fechados.
+
+**`menu_items.categoria` guarda o nome, não o id.** Renomear categoria precisa
+reescrever os produtos junto (`categorias.atualizar` já faz). Esquecer disso
+faz os produtos sumirem dos filtros do cardápio.
+
 **`pedidos.atualizar` tem whitelist de colunas.** Campo fora do `map` é
 descartado com um `console.warn` que ninguém vê. Ao adicionar coluna nova que
 precise ser atualizável, incluir no `map`.

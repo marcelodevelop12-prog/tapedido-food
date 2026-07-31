@@ -38,8 +38,10 @@ contextBridge.exposeInMainWorld('api', {
 
   // Categorias
   categorias: {
-    listar: () => invoke('categorias:listar'),
+    listar: (incluirInativas) => invoke('categorias:listar', incluirInativas),
     criar: (dados) => invoke('categorias:criar', dados),
+    atualizar: (dados) => invoke('categorias:atualizar', dados),
+    deletar: (id) => invoke('categorias:deletar', id),
   },
 
   // Mesas
@@ -130,6 +132,7 @@ contextBridge.exposeInMainWorld('api', {
     vendas: (periodo) => invoke('relatorios:vendas', periodo),
     produtosMaisVendidos: (periodo) => invoke('relatorios:produtosMaisVendidos', periodo),
     estoque: () => invoke('relatorios:estoque'),
+    custoLucro: (periodo) => invoke('relatorios:custoLucro', periodo),
   },
 
   // Config

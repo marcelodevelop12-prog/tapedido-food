@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Upload } from 'lucide-react'
+import { api } from '../../lib/api'
 
 const isElectron = typeof window !== 'undefined' && window.api
 
-const CATEGORIAS = ['Lanches', 'Pratos', 'Pizzas', 'Bebidas', 'Sobremesas', 'Outros']
+// Usada só até as categorias do banco chegarem, e como rede de segurança se a
+// consulta falhar — um select vazio impediria de cadastrar produto.
+const CATEGORIAS_PADRAO = ['Lanches', 'Pratos', 'Pizzas', 'Bebidas', 'Sobremesas', 'Outros']
 const UNIDADES = [
   { value: 'un', label: 'Unidade (un)' },
   { value: 'kg', label: 'Quilograma (kg)' },
@@ -21,6 +24,16 @@ export default function FormProduto({ produto, onSalvar, onFechar }) {
   const [novoAdicional, setNovoAdicional] = useState({ nome: '', preco: '' })
   const [salvando, setSalvando] = useState(false)
   const [uploadando, setUploadando] = useState(false)
+  const [categorias, setCategorias] = useState(CATEGORIAS_PADRAO)
+
+  useEffect(() => {
+    api.categorias.listar()
+      .then(lista => {
+        const nomes = (lista || []).map(c => c.nome).filter(Boolean)
+        if (nomes.length) setCategorias(nomes)
+      })
+      .catch(() => {})
+  }, [])
 
   async function handleUploadImagem() {
     if (!isElectron) return
@@ -178,7 +191,12 @@ export default function FormProduto({ produto, onSalvar, onFechar }) {
                 onChange={e => set('categoria', e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
               >
-                {CATEGORIAS.map(c => <option key={c}>{c}</option>)}
+                {/* Produto antigo pode estar numa categoria ja removida; sem
+                    isto o select cairia na primeira opcao e trocaria a
+                    categoria dele sem ninguem pedir. */}
+                {(categorias.includes(form.categoria) ? categorias : [form.categoria, ...categorias])
+                  .filter(Boolean)
+                  .map(c => <option key={c}>{c}</option>)}
               </select>
             </div>
 
