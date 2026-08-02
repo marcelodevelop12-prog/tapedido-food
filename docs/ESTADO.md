@@ -227,9 +227,13 @@ não vê erro de RLS, vê dado que não chega.
 Ordem obrigatória:
 
 1. Publicar o app do garçom (Vercel). Seguro: sem token, cai no fallback anon.
-2. Publicar release do PDV com o JWT. Mesmo fallback.
+2. ~~Publicar release do PDV com o JWT.~~ **Feito em 02/08 —
+   [v1.3.0](https://github.com/marcelodevelop12-prog/tapedido-food/releases/tag/v1.3.0)
+   publicada no GitHub Releases (`latest.yml` + instalador + blockmap), release
+   real, não draft. `electron-updater` de cada PDV instalado vai puxar sozinho.
 3. **Confirmar que o PDV do cliente real atualizou e está pegando token** —
-   dá para ver nos logs da função `entrar`.
+   dá para ver nos logs da função `entrar`. Ainda não confirmado — depende do
+   auto-update chegar na máquina do cliente.
 4. Só então virar a RLS.
 
 O passo 3 é o portão e não dá para apressar: depende do auto-update chegar na
