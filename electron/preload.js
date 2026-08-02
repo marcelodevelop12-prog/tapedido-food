@@ -3,6 +3,11 @@ const { contextBridge, ipcRenderer } = require('electron')
 const invoke = (channel, ...args) => ipcRenderer.invoke(channel, ...args)
 
 contextBridge.exposeInMainWorld('api', {
+  // Backup
+  backup: {
+    exportar: () => invoke('backup:exportar'),
+    importar: () => invoke('backup:importar'),
+  },
   // Licença
   licenca: {
     verificar: () => invoke('licenca:verificar'),
@@ -72,6 +77,13 @@ contextBridge.exposeInMainWorld('api', {
     dashboard: (periodo) => invoke('pedidos:dashboard', periodo),
   },
 
+  // Pedidos de cozinha (tickets de item de mesa vindos do garcom)
+  pedidosCozinha: {
+    listar: () => invoke('pedidosCozinha:listar'),
+    atualizar: (dados) => invoke('pedidosCozinha:atualizar', dados),
+    resolverPorMesa: (mesa) => invoke('pedidosCozinha:resolverPorMesa', mesa),
+  },
+
   // Estoque
   estoque: {
     listar: () => invoke('estoque:listar'),
@@ -83,6 +95,7 @@ contextBridge.exposeInMainWorld('api', {
   // Caixa
   caixa: {
     sessaoAtual: () => invoke('caixa:sessaoAtual'),
+    sessoes: (dias) => invoke('caixa:sessoes', dias),
     abrir: (dados) => invoke('caixa:abrir', dados),
     fechar: (dados) => invoke('caixa:fechar', dados),
     registrarVenda: (dados) => invoke('caixa:registrarVenda', dados),
@@ -111,12 +124,27 @@ contextBridge.exposeInMainWorld('api', {
     atualizar: (dados) => invoke('fornecedores:atualizar', dados),
   },
 
+  // Clientes
+  clientes: {
+    buscarPorTelefone: (telefone) => invoke('clientes:buscarPorTelefone', telefone),
+    listar: () => invoke('clientes:listar'),
+    criar: (dados) => invoke('clientes:criar', dados),
+    atualizar: (dados) => invoke('clientes:atualizar', dados),
+  },
+
   // Entregadores
   entregadores: {
     listar: (incluirInativos) => invoke('entregadores:listar', incluirInativos),
     criar: (dados) => invoke('entregadores:criar', dados),
     atualizar: (dados) => invoke('entregadores:atualizar', dados),
     deletar: (id) => invoke('entregadores:deletar', id),
+  },
+
+  colaboradores: {
+    listar: (incluirInativos) => invoke('colaboradores:listar', incluirInativos),
+    criar: (dados) => invoke('colaboradores:criar', dados),
+    atualizar: (dados) => invoke('colaboradores:atualizar', dados),
+    deletar: (id) => invoke('colaboradores:deletar', id),
   },
 
   // Zonas

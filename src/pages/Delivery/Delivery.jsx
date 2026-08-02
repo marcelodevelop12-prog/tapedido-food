@@ -1,11 +1,10 @@
 import React, { useEffect, useState, useRef } from 'react'
 import {
-  Plus, Printer, Clock, Play, MessageSquare, Check, X,
+  Printer, Clock, Play, MessageSquare, Check, X,
   ChevronDown, ChevronUp, Bell, Bike, CheckCircle2
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '../../lib/api'
-import NovoPedido from '../Pedidos/NovoPedido'
 
 // ─── Status reais do SQLite ───────────────────────────────────────────────────
 // Valores reais da coluna status na tabela pedidos (db.js: DEFAULT 'recebido')
@@ -43,10 +42,21 @@ function minutosParado(pedido) {
 }
 
 // ─── Próxima ação por status ──────────────────────────────────────────────────
-// Pedidos tipo 'mesa' entram direto como 'entregue' — sem botão de avanço.
-// 'entregue' e 'cancelado' também não têm botão.
+// Pedidos tipo 'mesa' e 'balcao' entram direto como 'entregue' — venda
+// presencial já concluída na hora, sem botão de avanço. 'entregue' e
+// 'cancelado' também não têm botão.
+// 'mesa_pedido' é o ticket de cozinha (item pedido pelo garçom antes da conta
+// fechar): passa pelo mesmo Novo -> Preparando -> Pronto do delivery, mas o
+// passo final é "Entregar à Mesa" em vez de "saiu para entrega" — não existe
+// deslocamento, é só o garçom levando o prato pra mesa.
 function getProximaAcao(pedido) {
-  if (pedido.tipo_entrega === 'mesa') return null
+  if (pedido.tipo_entrega === 'mesa' || pedido.tipo_entrega === 'balcao') return null
+  if (pedido.tipo_entrega === 'mesa_pedido') {
+    if (pedido.status === 'recebido')   return { label: 'Aceitar Pedido',     proximo: 'em_preparo', Icon: Play,         cor: 'bg-[#F97316] text-black' }
+    if (pedido.status === 'em_preparo') return { label: 'Marcar como Pronto', proximo: 'pronto',     Icon: Check,        cor: 'bg-[#F97316] text-black' }
+    if (pedido.status === 'pronto')     return { label: 'Entregar à Mesa',    proximo: 'entregue',   Icon: CheckCircle2, cor: 'bg-[#F97316] text-black' }
+    return null
+  }
   if (pedido.status === 'recebido')   return { label: 'Aceitar Pedido',      proximo: 'em_preparo', Icon: Play,         cor: 'bg-[#F97316] text-black' }
   if (pedido.status === 'em_preparo') return { label: 'Marcar como Pronto',  proximo: 'pronto',     Icon: Check,        cor: 'bg-[#F97316] text-black' }
   if (pedido.status === 'pronto')     return { label: 'Saiu para Entrega',   proximo: 'saiu',       Icon: Bike,         cor: 'bg-[#F97316] text-black' }
@@ -78,7 +88,6 @@ export default function Pedidos() {
   const [expandidos, setExpandidos]       = useState([])
   const [pedidoImpressao, setPedidoImpressao] = useState(null)
   const [loja, setLoja]                   = useState(null)
-  const [mostrarNovoPedido, setMostrarNovoPedido] = useState(false)
   const [entregadores, setEntregadores] = useState([])
   const [pedidoParaEnviar, setPedidoParaEnviar] = useState(null)
   const pollingRef = useRef(null)
@@ -96,8 +105,27 @@ export default function Pedidos() {
 
   async function carregar() {
     try {
-      const data = await api.pedidos.listar()
-      setPedidos(data)
+      const [data, tickets] = await Promise.all([
+        api.pedidos.listar(),
+        api.pedidosCozinha.listar(),
+      ])
+      // Ticket de cozinha vira um card na mesma esteira, com a mesma forma que
+      // um pedido — mas com id prefixado (nunca colide com o id numérico de
+      // pedidos) e sem total: ele não representa dinheiro, só que tem item de
+      // mesa esperando para ser preparado.
+      const ticketsComoCard = tickets.map(t => ({
+        id: `cozinha-${t.id}`,
+        _origem: 'cozinha',
+        _idOriginal: t.id,
+        tipo_entrega: 'mesa_pedido',
+        status: t.status,
+        mesa: t.mesa,
+        nome_cliente: t.mesa,
+        criado_em: t.criado_em,
+        status_alterado_em: t.status_alterado_em,
+        itens: [{ nome_item: t.nome_item, quantidade: t.quantidade }],
+      }))
+      setPedidos([...data, ...ticketsComoCard])
     } finally {
       setCarregando(false)
     }
@@ -114,25 +142,32 @@ export default function Pedidos() {
 
   async function atualizarStatus(pedido, novoStatus, extras = {}) {
     try {
-      await api.pedidos.atualizar({ id: pedido.id, status: novoStatus, ...extras })
+      if (pedido._origem === 'cozinha') {
+        // Ticket de cozinha não é venda — não passa nem perto do caixa, só
+        // muda de coluna na esteira.
+        await api.pedidosCozinha.atualizar({ id: pedido._idOriginal, status: novoStatus })
+      } else {
+        await api.pedidos.atualizar({ id: pedido.id, status: novoStatus, ...extras })
 
-      // Delivery e retirada só viram dinheiro no caixa quando chegam ao cliente.
-      // Pedidos de mesa já foram lançados no fechamento da comanda.
-      if (novoStatus === 'entregue' && pedido.tipo_entrega !== 'mesa') {
-        const resultado = await api.caixa.registrarVendaDelivery({
-          valor: Number(pedido.total || 0),
-          formaPagamento: pedido.forma_pagamento,
-          descricao: `Pedido #${pedido.numero_pedido}`,
-          refExterna: `pedido:${pedido.id}`,
-        })
-        if (resultado?.erro) {
-          toast.error(`Pedido entregue, mas não entrou no caixa: ${resultado.erro}`, { duration: 8000 })
+        // Delivery e retirada só viram dinheiro no caixa quando chegam ao cliente.
+        // Pedidos de mesa já foram lançados no fechamento da comanda.
+        if (novoStatus === 'entregue' && pedido.tipo_entrega !== 'mesa') {
+          const resultado = await api.caixa.registrarVendaDelivery({
+            valor: Number(pedido.total || 0),
+            formaPagamento: pedido.forma_pagamento,
+            descricao: `Pedido #${pedido.numero_pedido}`,
+            refExterna: `pedido:${pedido.id}`,
+          })
+          if (resultado?.erro) {
+            toast.error(`Pedido entregue, mas não entrou no caixa: ${resultado.erro}`, { duration: 8000 })
+          }
         }
       }
 
       // Atualiza local imediatamente + recarrega lista do banco
       setPedidos(prev => prev.map(p => p.id === pedido.id ? { ...p, status: novoStatus } : p))
-      toast.success(`Pedido #${pedido.numero_pedido} → ${STATUS_INFO[novoStatus]?.label || novoStatus}`)
+      const rotulo = pedido._origem === 'cozinha' ? pedido.mesa : `Pedido #${pedido.numero_pedido}`
+      toast.success(`${rotulo} → ${STATUS_INFO[novoStatus]?.label || novoStatus}`)
       await carregar()
     } catch {
       toast.error('Erro ao atualizar pedido')
@@ -140,7 +175,10 @@ export default function Pedidos() {
   }
 
   async function cancelar(pedido) {
-    if (!confirm(`Cancelar pedido #${pedido.numero_pedido}?`)) return
+    const rotulo = pedido._origem === 'cozinha'
+      ? `${pedido.mesa} — ${pedido.itens[0]?.nome_item}`
+      : `pedido #${pedido.numero_pedido}`
+    if (!confirm(`Cancelar ${rotulo}?`)) return
     await atualizarStatus(pedido, 'cancelado')
   }
 
@@ -213,13 +251,6 @@ export default function Pedidos() {
             )}
           </p>
         </div>
-        <button
-          onClick={() => setMostrarNovoPedido(true)}
-          className="flex items-center gap-2 bg-[#F97316] hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-        >
-          <Plus size={18} />
-          Novo Pedido
-        </button>
       </div>
 
       {/* Alternância fluxo / finalizados */}
@@ -255,17 +286,27 @@ export default function Pedidos() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {finalizados.map(pedido => (
-              <CardPedido
-                key={pedido.id}
-                pedido={pedido}
-                expandido={expandidos.includes(pedido.id)}
-                proximaAcao={getProximaAcao(pedido)}
-                entregador={entregadores.find(e => e.id === pedido.entregador_id)}
-                onToggleExpand={() => toggleExpandido(pedido.id)}
-                onAtualizarStatus={avancarStatus}
-                onCancelar={() => cancelar(pedido)}
-                onImprimir={() => abrirImpressao(pedido)}
-              />
+              pedido._origem === 'cozinha' ? (
+                <CardCozinha
+                  key={pedido.id}
+                  ticket={pedido}
+                  proximaAcao={getProximaAcao(pedido)}
+                  onAtualizarStatus={avancarStatus}
+                  onCancelar={() => cancelar(pedido)}
+                />
+              ) : (
+                <CardPedido
+                  key={pedido.id}
+                  pedido={pedido}
+                  expandido={expandidos.includes(pedido.id)}
+                  proximaAcao={getProximaAcao(pedido)}
+                  entregador={entregadores.find(e => e.id === pedido.entregador_id)}
+                  onToggleExpand={() => toggleExpandido(pedido.id)}
+                  onAtualizarStatus={avancarStatus}
+                  onCancelar={() => cancelar(pedido)}
+                  onImprimir={() => abrirImpressao(pedido)}
+                />
+              )
             ))}
           </div>
         )
@@ -299,17 +340,27 @@ export default function Pedidos() {
                     Vazio
                   </div>
                 ) : daColuna.map(pedido => (
-                  <CardPedido
-                    key={pedido.id}
-                    pedido={pedido}
-                    expandido={expandidos.includes(pedido.id)}
-                    proximaAcao={getProximaAcao(pedido)}
-                    entregador={entregadores.find(e => e.id === pedido.entregador_id)}
-                    onToggleExpand={() => toggleExpandido(pedido.id)}
-                    onAtualizarStatus={avancarStatus}
-                    onCancelar={() => cancelar(pedido)}
-                    onImprimir={() => abrirImpressao(pedido)}
-                  />
+                  pedido._origem === 'cozinha' ? (
+                    <CardCozinha
+                      key={pedido.id}
+                      ticket={pedido}
+                      proximaAcao={getProximaAcao(pedido)}
+                      onAtualizarStatus={avancarStatus}
+                      onCancelar={() => cancelar(pedido)}
+                    />
+                  ) : (
+                    <CardPedido
+                      key={pedido.id}
+                      pedido={pedido}
+                      expandido={expandidos.includes(pedido.id)}
+                      proximaAcao={getProximaAcao(pedido)}
+                      entregador={entregadores.find(e => e.id === pedido.entregador_id)}
+                      onToggleExpand={() => toggleExpandido(pedido.id)}
+                      onAtualizarStatus={avancarStatus}
+                      onCancelar={() => cancelar(pedido)}
+                      onImprimir={() => abrirImpressao(pedido)}
+                    />
+                  )
                 ))}
               </div>
             )
@@ -324,14 +375,6 @@ export default function Pedidos() {
           loja={loja}
           onImprimir={imprimirCupom}
           onFechar={() => setPedidoImpressao(null)}
-        />
-      )}
-
-      {mostrarNovoPedido && (
-        <NovoPedido
-          tipoInicial="entrega"
-          onFechar={() => setMostrarNovoPedido(false)}
-          onPedidoCriado={() => { setMostrarNovoPedido(false); carregar() }}
         />
       )}
 
@@ -428,7 +471,7 @@ function CardPedido({ pedido, expandido, proximaAcao, entregador, onToggleExpand
             {info.label}
           </span>
           <span className="text-xs text-gray-500">
-            {isMesa ? '🪑' : pedido.tipo_entrega === 'entrega' ? '🛵' : '🏃'}
+            {isMesa ? '🪑' : pedido.tipo_entrega === 'balcao' ? '🧾' : pedido.tipo_entrega === 'entrega' ? '🛵' : '🏃'}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -516,6 +559,63 @@ function CardPedido({ pedido, expandido, proximaAcao, entregador, onToggleExpand
             <button
               onClick={onCancelar}
               title="Cancelar pedido"
+              className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/5 text-gray-400 hover:text-red-500 transition-colors"
+            >
+              <X size={16} />
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Ticket de cozinha (item de mesa pedido pelo garçom) ──────────────────────
+// Card mais simples que CardPedido de proposito: sem preco, sem whatsapp, sem
+// impressao — o ticket nao e uma venda, e so um aviso pra cozinha preparar.
+
+function CardCozinha({ ticket, proximaAcao, onAtualizarStatus, onCancelar }) {
+  const isNovo = ticket.status === 'recebido'
+  const info   = STATUS_INFO[ticket.status] || { label: ticket.status, cor: 'bg-gray-500/20 text-gray-400 border-gray-500/40' }
+  const hora   = ticket.criado_em ? new Date(ticket.criado_em).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '--:--'
+  const item   = ticket.itens[0]
+
+  return (
+    <div
+      className={`rounded-2xl border overflow-hidden flex flex-col shadow-xl transition-all ${
+        isNovo ? 'ring-1 ring-[#F97316]/40' : ''
+      }`}
+      style={{ background: '#162035', borderColor: 'rgba(255,255,255,0.08)' }}
+    >
+      <div className="px-4 py-3 flex items-center justify-between border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center gap-2">
+          <span className="text-lg">🍽️</span>
+          <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded-md border ${info.cor}`}>
+            {info.label}
+          </span>
+          <span className="text-xs text-gray-500">mesa</span>
+        </div>
+        <TempoParado pedido={ticket} hora={hora} />
+      </div>
+
+      <div className="p-4 space-y-3 flex-1">
+        <p className="text-white font-bold text-sm leading-none">{ticket.mesa}</p>
+        <p className="text-gray-300 text-sm">{item.quantidade}x {item.nome_item}</p>
+
+        <div className="flex gap-2 pt-1">
+          {proximaAcao && (
+            <button
+              onClick={() => onAtualizarStatus(ticket, proximaAcao.proximo)}
+              className={`flex-1 flex items-center justify-center gap-1.5 font-bold text-xs py-2 rounded-xl hover:opacity-90 transition-opacity ${proximaAcao.cor}`}
+            >
+              <proximaAcao.Icon size={14} />
+              {proximaAcao.label}
+            </button>
+          )}
+          {!['entregue', 'cancelado'].includes(ticket.status) && (
+            <button
+              onClick={onCancelar}
+              title="Cancelar ticket"
               className="w-9 h-9 flex items-center justify-center rounded-xl bg-white/5 text-gray-400 hover:text-red-500 transition-colors"
             >
               <X size={16} />

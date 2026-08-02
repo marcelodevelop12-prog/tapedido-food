@@ -561,6 +561,21 @@ async function itemPertenceALoja(comandaId, lojaId) {
   }
 }
 
+// `comandas` no Supabase nao guarda o nome da mesa — so `mesa_id`. Precisa
+// buscar em `mesas` pelo numero/nome pra identificar qual mesa fez o pedido;
+// sem isto todo ticket de cozinha e todo pedido fechado pelo garcom mostrava
+// so "Mesa" generico, sem dizer qual.
+async function resolverNomeMesa(mesaId) {
+  if (!mesaId) return 'Mesa'
+  try {
+    const { data } = await sb().from('mesas').select('numero, nome').eq('id', mesaId).maybeSingle()
+    if (!data) return 'Mesa'
+    return data.nome || `Mesa ${data.numero}`
+  } catch {
+    return 'Mesa'
+  }
+}
+
 function iniciarRealtime(lojaId, mainWindow, db) {
   if (!lojaId) return
 
@@ -583,33 +598,53 @@ function iniciarRealtime(lojaId, mainWindow, db) {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('realtime:novoItem', payload.new)
       }
+      // Vira um ticket de cozinha na esteira de Pedidos (Novo -> Preparando ->
+      // Pronto), igual delivery. Antes disto, item pedido pelo garcom nao
+      // aparecia em lugar nenhum ate a conta fechar — a cozinha nao tinha como
+      // saber que tinha pedido novo.
+      try {
+        const { data: comanda } = await sb()
+          .from('comandas')
+          .select('mesa_id')
+          .eq('id', payload.new.comanda_id)
+          .maybeSingle()
+        const mesaNome = await resolverNomeMesa(comanda?.mesa_id)
+        db.pedidosCozinha.criar({
+          mesa: mesaNome,
+          nomeItem: payload.new.nome_item,
+          quantidade: payload.new.quantidade,
+        })
+      } catch (err) {
+        console.error('[Realtime] erro ao criar ticket de cozinha:', err.message)
+      }
     })
     .on('postgres_changes', {
       event: 'UPDATE',
       schema: 'public',
       table: 'comandas',
       filter: `loja_id=eq.${lojaId}`,
-    }, (payload) => {
+    }, async (payload) => {
       console.log('[Realtime] comandas UPDATE:', payload.new)
       if (payload.new.status !== 'fechada') return
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('realtime:comandaFechada', payload.new)
       }
-      // Registra venda no caixa automaticamente.
+      // Registra venda no caixa automaticamente e cria o pedido no historico.
       //
       // Cuidado: quando e o PROPRIO PDV que fecha a mesa, ele ja lancou a venda
-      // no caixa e so depois marcou a comanda como fechada no Supabase — o que
-      // faz este mesmo listener receber o eco da alteracao. Lancar aqui de novo
-      // duplicava toda venda de mesa fechada pelo PDV.
+      // no caixa e ja criou o pedido, e so depois marcou a comanda como fechada
+      // no Supabase — o que faz este mesmo listener receber o eco da alteracao.
+      // Repetir aqui duplicava toda venda de mesa fechada pelo PDV.
       //
       // Quem fecha pelo app do garcom sempre grava forma_pagamento; o PDV nao
       // grava. A ausencia do campo identifica o eco.
-      try {
-        const formaPagamento = payload.new.forma_pagamento
-        const total = payload.new.total || 0
-        if (!formaPagamento) {
-          console.log('[Realtime] comanda fechada pelo proprio PDV, venda ja lancada — ignorando')
-        } else if (total > 0) {
+      const formaPagamento = payload.new.forma_pagamento
+      const total = payload.new.total || 0
+      const mesaNome = await resolverNomeMesa(payload.new.mesa_id)
+      if (!formaPagamento) {
+        console.log('[Realtime] comanda fechada pelo proprio PDV, venda ja lancada — ignorando')
+      } else if (total > 0) {
+        try {
           db.caixa.registrarVenda({
             formaPagamento,
             valor: total,
@@ -617,9 +652,46 @@ function iniciarRealtime(lojaId, mainWindow, db) {
             refExterna: `comanda:${payload.new.id}`,
           })
           console.log('[Realtime] venda registrada no caixa:', total, formaPagamento)
+        } catch (err) {
+          console.error('[Realtime] erro ao registrar venda:', err.message)
         }
+        // Sem isto a venda ficava so no caixa — nunca aparecia na esteira de
+        // Pedidos (aba Finalizados), porque so o PDV fechando a propria mesa
+        // criava esse registro. Mesmo bug de "path duplo" que o caixa ja
+        // resolve com refExterna; aqui faltava o equivalente para pedidos.
+        try {
+          const { data: itensSupabase } = await sb()
+            .from('comanda_itens')
+            .select('*')
+            .eq('comanda_id', payload.new.id)
+          db.pedidos.criar({
+            tipoEntrega: 'mesa',
+            nomeCliente: mesaNome,
+            mesa: mesaNome,
+            formaPagamento,
+            subtotal: total,
+            total,
+            status: 'entregue',
+            itens: (itensSupabase || []).map(i => ({
+              menuItemId: i.menu_item_id ?? null,
+              nomeItem: i.nome_item,
+              quantidade: i.quantidade,
+              precoUnitario: i.preco_unitario,
+              subtotal: i.subtotal ?? (i.preco_unitario * i.quantidade),
+            })),
+          })
+          console.log('[Realtime] pedido registrado no historico:', payload.new.id)
+        } catch (err) {
+          console.error('[Realtime] erro ao registrar pedido da mesa:', err.message)
+        }
+      }
+      // Qualquer ticket de cozinha que a mesa ainda tinha em aberto vira
+      // 'entregue' — a mesa ja pagou e foi embora, nao faz sentido continuar
+      // preso em "Novo"/"Preparando" na esteira.
+      try {
+        db.pedidosCozinha.resolverPorMesa(mesaNome)
       } catch (err) {
-        console.error('[Realtime] erro ao registrar venda:', err.message)
+        console.error('[Realtime] erro ao resolver tickets de cozinha:', err.message)
       }
       // Impressao automatica se configurado
       try {
@@ -628,7 +700,7 @@ function iniciarRealtime(lojaId, mainWindow, db) {
           const itens = payload.new.itens || []
           db.impressao.recibo({
             tipo: 'mesa',
-            mesa: payload.new.mesa_nome || 'Mesa',
+            mesa: mesaNome,
             formaPagamento: payload.new.forma_pagamento || 'dinheiro',
             total: payload.new.total || 0,
             itens,

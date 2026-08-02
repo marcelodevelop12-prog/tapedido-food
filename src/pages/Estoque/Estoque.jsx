@@ -1,14 +1,22 @@
 import React, { useEffect, useState } from 'react'
-import { Search, AlertTriangle, Plus, TrendingDown, TrendingUp, Package } from 'lucide-react'
+import { Search, AlertTriangle, Plus, TrendingDown, TrendingUp, Package, Pencil } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '../../lib/api'
 import { formatarMoeda } from '../../lib/utils'
+import FormProduto from '../Cardapio/FormProduto'
 
 export default function Estoque() {
   const [produtos, setProdutos] = useState([])
   const [busca, setBusca] = useState('')
   const [filtro, setFiltro] = useState('todos') // todos, alertas
   const [modalMovimentacao, setModalMovimentacao] = useState(null)
+  // Edita o cadastro do produto (nome, categoria, preco...) — diferente de
+  // ModalMovimentacao, que so mexe em quantidade. A tela de Estoque nunca
+  // teve essa acao; o Cardapio ja tinha o mesmo FormProduto pronto.
+  const [produtoEditando, setProdutoEditando] = useState(null)
+  // Cadastrar item novo (bebida, cerveja, qualquer coisa revendida) direto
+  // daqui — antes só dava pra criar produto pelo Cardápio.
+  const [criandoProduto, setCriandoProduto] = useState(false)
   const [carregando, setCarregando] = useState(true)
 
   useEffect(() => { carregar() }, [])
@@ -42,6 +50,24 @@ export default function Estoque() {
     }
   }
 
+  async function salvarProduto(dados) {
+    try {
+      if (produtoEditando) {
+        const atualizado = await api.produtos.atualizar({ ...dados, id: produtoEditando.id })
+        setProdutos(prev => prev.map(p => p.id === produtoEditando.id ? atualizado : p))
+        toast.success('Produto atualizado!')
+        setProdutoEditando(null)
+      } else {
+        const novo = await api.produtos.criar(dados)
+        setProdutos(prev => [...prev, novo])
+        toast.success('Produto cadastrado!')
+        setCriandoProduto(false)
+      }
+    } catch {
+      toast.error('Erro ao salvar produto')
+    }
+  }
+
   return (
     <div className="space-y-4 fade-in">
       <div className="flex items-center justify-between">
@@ -49,6 +75,13 @@ export default function Estoque() {
           <h2 className="text-xl font-bold text-gray-800">Estoque</h2>
           <p className="text-sm text-gray-500">{produtos.length} produtos · Valor total: {formatarMoeda(valorTotal)}</p>
         </div>
+        <button
+          onClick={() => setCriandoProduto(true)}
+          className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+        >
+          <Plus size={18} />
+          Novo Produto
+        </button>
       </div>
 
       {/* Cards de resumo */}
@@ -153,6 +186,14 @@ export default function Estoque() {
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-center gap-1.5">
                       <button
+                        onClick={() => setProdutoEditando(produto)}
+                        className="flex items-center gap-1 px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded text-xs font-medium transition-colors"
+                        title="Editar produto"
+                      >
+                        <Pencil size={12} />
+                        Editar
+                      </button>
+                      <button
                         onClick={() => setModalMovimentacao({ produto, tipo: 'entrada' })}
                         className="flex items-center gap-1 px-2 py-1 bg-green-100 hover:bg-green-200 text-green-700 rounded text-xs font-medium transition-colors"
                         title="Entrada de estoque"
@@ -182,6 +223,14 @@ export default function Estoque() {
           tipoInicial={modalMovimentacao.tipo}
           onSalvar={salvarMovimentacao}
           onFechar={() => setModalMovimentacao(null)}
+        />
+      )}
+
+      {(produtoEditando || criandoProduto) && (
+        <FormProduto
+          produto={produtoEditando}
+          onSalvar={salvarProduto}
+          onFechar={() => { setProdutoEditando(null); setCriandoProduto(false) }}
         />
       )}
     </div>

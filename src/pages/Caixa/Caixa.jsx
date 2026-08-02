@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { DollarSign, TrendingDown, TrendingUp, X, Lock, Unlock } from 'lucide-react'
+import { DollarSign, TrendingDown, TrendingUp, X, Lock, Unlock, History } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '../../lib/api'
 import { formatarMoeda, formatarDataHora } from '../../lib/utils'
@@ -8,11 +8,20 @@ export default function Caixa() {
   const [sessao, setSessao] = useState(null)
   const [movimentacoes, setMovimentacoes] = useState([])
   const [modal, setModal] = useState(null) // 'abrir' | 'fechar' | 'sangria' | 'suprimento'
-  const [form, setForm] = useState({ valor: '', descricao: '', observacoes: '' })
+  const [form, setForm] = useState({ valor: '', descricao: '', observacoes: '', responsavel: '' })
   const [carregando, setCarregando] = useState(true)
   const [salvando, setSalvando] = useState(false)
+  const [colaboradores, setColaboradores] = useState([])
+  const [historico, setHistorico] = useState([])
+  const [diasHistorico, setDiasHistorico] = useState(7)
+  const [carregandoHistorico, setCarregandoHistorico] = useState(true)
 
-  useEffect(() => { carregar() }, [])
+  useEffect(() => {
+    carregar()
+    api.colaboradores.listar().then(setColaboradores).catch(() => setColaboradores([]))
+  }, [])
+
+  useEffect(() => { carregarHistorico() }, [diasHistorico])
 
   async function carregar() {
     try {
@@ -27,29 +36,43 @@ export default function Caixa() {
     }
   }
 
+  async function carregarHistorico() {
+    setCarregandoHistorico(true)
+    try {
+      const s = await api.caixa.sessoes(diasHistorico)
+      setHistorico(s || [])
+    } finally {
+      setCarregandoHistorico(false)
+    }
+  }
+
   async function handleAbrirCaixa(e) {
     e.preventDefault()
+    if (!form.responsavel.trim()) { toast.error('Informe quem está abrindo o caixa'); return }
     setSalvando(true)
     try {
-      const s = await api.caixa.abrir({ valorInicial: parseFloat(form.valor) || 0 })
+      const s = await api.caixa.abrir({ valorInicial: parseFloat(form.valor) || 0, responsavel: form.responsavel.trim() })
       setSessao(s)
       setModal(null)
-      setForm({ valor: '', descricao: '', observacoes: '' })
+      setForm({ valor: '', descricao: '', observacoes: '', responsavel: '' })
       toast.success('Caixa aberto!')
+      carregarHistorico()
     } catch { toast.error('Erro ao abrir caixa') }
     finally { setSalvando(false) }
   }
 
   async function handleFecharCaixa(e) {
     e.preventDefault()
+    if (!form.responsavel.trim()) { toast.error('Informe quem está fechando o caixa'); return }
     setSalvando(true)
     try {
-      await api.caixa.fechar({ valorFinal: parseFloat(form.valor) || 0, observacoes: form.observacoes })
+      await api.caixa.fechar({ valorFinal: parseFloat(form.valor) || 0, observacoes: form.observacoes, responsavel: form.responsavel.trim() })
       setSessao(null)
       setMovimentacoes([])
       setModal(null)
-      setForm({ valor: '', descricao: '', observacoes: '' })
+      setForm({ valor: '', descricao: '', observacoes: '', responsavel: '' })
       toast.success('Caixa fechado!')
+      carregarHistorico()
     } catch { toast.error('Erro ao fechar caixa') }
     finally { setSalvando(false) }
   }
@@ -62,7 +85,7 @@ export default function Caixa() {
       await api.caixa.sangria({ valor: parseFloat(form.valor), descricao: form.descricao })
       carregar()
       setModal(null)
-      setForm({ valor: '', descricao: '', observacoes: '' })
+      setForm({ valor: '', descricao: '', observacoes: '', responsavel: '' })
       toast.success('Sangria registrada!')
     } catch { toast.error('Erro ao registrar sangria') }
     finally { setSalvando(false) }
@@ -76,7 +99,7 @@ export default function Caixa() {
       await api.caixa.suprimento({ valor: parseFloat(form.valor), descricao: form.descricao })
       carregar()
       setModal(null)
-      setForm({ valor: '', descricao: '', observacoes: '' })
+      setForm({ valor: '', descricao: '', observacoes: '', responsavel: '' })
       toast.success('Suprimento registrado!')
     } catch { toast.error('Erro ao registrar suprimento') }
     finally { setSalvando(false) }
@@ -147,6 +170,10 @@ export default function Caixa() {
                 <p className="font-bold text-gray-800">{formatarDataHora(sessao.aberto_em)}</p>
               </div>
               <div>
+                <p className="text-sm text-gray-500 mb-1">Aberto por</p>
+                <p className="font-bold text-gray-800">{sessao.aberto_por || '—'}</p>
+              </div>
+              <div>
                 <p className="text-sm text-gray-500 mb-1">Troco inicial</p>
                 <p className="font-bold text-gray-800">{formatarMoeda(sessao.valor_inicial)}</p>
               </div>
@@ -205,6 +232,70 @@ export default function Caixa() {
         </>
       )}
 
+      {/* Histórico de abertura/fechamento — independe do caixa estar aberto agora */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <History size={16} className="text-gray-400" />
+            <h3 className="font-semibold text-gray-800">Histórico de Caixa</h3>
+          </div>
+          <div className="flex border border-gray-200 rounded-lg overflow-hidden">
+            {[7, 15, 30].map(dias => (
+              <button
+                key={dias}
+                onClick={() => setDiasHistorico(dias)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${diasHistorico === dias ? 'bg-orange-500 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+              >
+                {dias} dias
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {carregandoHistorico ? (
+          <div className="px-5 py-8 text-center text-sm text-gray-400">Carregando...</div>
+        ) : historico.length === 0 ? (
+          <div className="px-5 py-8 text-center text-sm text-gray-400">Nenhuma sessão de caixa nos últimos {diasHistorico} dias</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-100">
+                <tr>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Abertura</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Aberto por</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Fechamento</th>
+                  <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Fechado por</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Vendas</th>
+                  <th className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Valor Final</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {historico.map(s => {
+                  const totalVendasSessao = (s.total_dinheiro || 0) + (s.total_pix || 0) + (s.total_debito || 0) + (s.total_credito || 0)
+                  const aberta = s.status === 'aberto'
+                  return (
+                    <tr key={s.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-sm text-gray-700">{formatarDataHora(s.aberto_em)}</td>
+                      <td className="px-4 py-3 text-sm text-gray-700">{s.aberto_por || '—'}</td>
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        {aberta
+                          ? <span className="text-green-600 font-medium">Em aberto</span>
+                          : formatarDataHora(s.fechado_em)}
+                      </td>
+                      <td className="px-4 py-3 text-sm text-gray-700">{aberta ? '—' : (s.fechado_por || '—')}</td>
+                      <td className="px-4 py-3 text-sm text-right font-medium text-green-600">{formatarMoeda(totalVendasSessao)}</td>
+                      <td className="px-4 py-3 text-sm text-right font-medium text-gray-800">
+                        {aberta ? '—' : formatarMoeda(s.valor_final)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Modais */}
       {modal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -232,6 +323,37 @@ export default function Caixa() {
                   autoFocus
                 />
               </div>
+              {(modal === 'abrir' || modal === 'fechar') && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Responsável *</label>
+                  {colaboradores.length > 0 ? (
+                    <select
+                      value={form.responsavel}
+                      onChange={e => setForm(p => ({ ...p, responsavel: e.target.value }))}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                      required
+                    >
+                      <option value="">Selecione quem está no caixa</option>
+                      {colaboradores.map(c => (
+                        <option key={c.id} value={c.nome}>{c.nome} — {c.funcao}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <>
+                      <input
+                        value={form.responsavel}
+                        onChange={e => setForm(p => ({ ...p, responsavel: e.target.value }))}
+                        placeholder="Nome de quem está no caixa"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                        required
+                      />
+                      <p className="text-xs text-gray-400 mt-1">
+                        Cadastre colaboradores em Configurações → Colaboradores para escolher numa lista.
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
               {(modal === 'sangria' || modal === 'suprimento') && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Descrição</label>

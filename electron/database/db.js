@@ -1,4 +1,5 @@
 const path = require('path')
+const fs = require('fs')
 const { app, dialog } = require('electron')
 const crypto = require('crypto')
 const os = require('os')
@@ -438,6 +439,67 @@ try {
   }
 } catch {}
 
+// Quem abriu/fechou o caixa. Texto livre, nao usuario logado — o sistema
+// ainda nao tem contas por pessoa, so licenca por loja.
+try { db.exec(`ALTER TABLE caixa_sessoes ADD COLUMN aberto_por TEXT`) } catch {}
+try { db.exec(`ALTER TABLE caixa_sessoes ADD COLUMN fechado_por TEXT`) } catch {}
+
+// Cliente por telefone: primeira compra cadastra, as seguintes so atualizam
+// nome/endereco se vierem preenchidos e somam no contador de pedidos.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS clientes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    loja_id INTEGER,
+    nome TEXT,
+    telefone TEXT NOT NULL,
+    endereco TEXT,
+    bairro TEXT,
+    total_pedidos INTEGER DEFAULT 0,
+    criado_em TEXT,
+    atualizado_em TEXT
+  );
+`)
+try {
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_clientes_telefone ON clientes (telefone)`)
+} catch {}
+// Bancos criados antes deste CREATE TABLE ficaram com a versao mais antiga da
+// tabela (sem atualizado_em) — o segundo CREATE TABLE IF NOT EXISTS acima nao
+// tem efeito quando a tabela ja existe. Sem esta coluna, clientes.criar,
+// clientes.atualizar e registrarClienteDoPedido derrubam com "no such column".
+try { db.exec(`ALTER TABLE clientes ADD COLUMN atualizado_em TEXT`) } catch {}
+
+// Ticket de cozinha: item pedido pelo garcom app numa mesa, antes da conta
+// fechar. Tabela separada de `pedidos` DE PROPOSITO — nao guarda preco. Se
+// virasse uma linha em `pedidos`/`itens_pedido`, a receita, o custoLucro e o
+// produtosMaisVendidos contariam a venda da mesa duas vezes (uma pelo ticket,
+// outra pelo fechamento da conta), e a baixa de estoque rodaria em dobro. Isto
+// e so pra cozinha ver "chegou pedido novo" — dinheiro e estoque continuam
+// entrando exclusivamente pelo fechamento da comanda.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS pedidos_cozinha (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    mesa TEXT NOT NULL,
+    nome_item TEXT NOT NULL,
+    quantidade REAL NOT NULL,
+    status TEXT DEFAULT 'recebido',
+    criado_em TEXT,
+    status_alterado_em TEXT
+  );
+`)
+
+// Equipe da loja (garçom, caixa, gerente...) — usado hoje so pra atribuir
+// quem abriu/fechou o caixa. `funcao` e texto livre (o cadastro sugere as
+// pre-definidas), nao FK: nao criamos uma segunda tabela so pra 3 opcoes fixas.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS colaboradores (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT NOT NULL,
+    funcao TEXT NOT NULL,
+    ativo INTEGER DEFAULT 1,
+    criado_em TEXT
+  );
+`)
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 const agora = () => new Date().toISOString()
 
@@ -657,8 +719,90 @@ function baixarEstoqueDoPedido(pedidoId, itens) {
   }
 }
 
+function normalizarTelefone(telefone) {
+  return String(telefone || '').replace(/\D/g, '')
+}
+
+// Upsert por telefone: primeira compra cadastra, as seguintes so trocam
+// nome/endereco se vier algo preenchido (senao um pedido sem esses campos
+// apagaria o que ja se sabia do cliente) e sempre somam no contador.
+function registrarClienteDoPedido({ telefone, nome, bairro, logradouro }) {
+  const limpo = normalizarTelefone(telefone)
+  if (!limpo) return
+  // `endereco` guarda so o logradouro — bairro ja tem coluna propria, e
+  // repeti-lo aqui dentro faria o preenchimento automatico devolver
+  // "Rua X, 123, Centro" bagunçado dentro do campo de endereco na proxima venda.
+  const endereco = logradouro || ''
+  const existente = db.prepare('SELECT id FROM clientes WHERE telefone = ?').get(limpo)
+  if (existente) {
+    db.prepare(`
+      UPDATE clientes SET
+        nome = CASE WHEN ? != '' THEN ? ELSE nome END,
+        bairro = CASE WHEN ? != '' THEN ? ELSE bairro END,
+        endereco = CASE WHEN ? != '' THEN ? ELSE endereco END,
+        total_pedidos = total_pedidos + 1,
+        atualizado_em = ?
+      WHERE id = ?
+    `).run(nome || '', nome || '', bairro || '', bairro || '', endereco, endereco, agora(), existente.id)
+  } else {
+    db.prepare(`
+      INSERT INTO clientes (nome, telefone, endereco, bairro, total_pedidos, criado_em, atualizado_em)
+      VALUES (?, ?, ?, ?, 1, ?, ?)
+    `).run(nome || '', limpo, endereco, bairro || '', agora(), agora())
+  }
+}
+
 // ── Módulos ────────────────────────────────────────────────────────────────
 const dbModule = {
+  // ── Backup ───────────────────────────────────────────────────────────────
+  backup: {
+    async exportar() {
+      const resultado = await dialog.showSaveDialog({
+        title: 'Salvar backup',
+        defaultPath: `tapedido-backup-${new Date().toISOString().slice(0, 10)}.db`,
+        filters: [{ name: 'Backup TáPedido', extensions: ['db'] }],
+      })
+      if (resultado.canceled || !resultado.filePath) return { sucesso: false, cancelado: true }
+      // db.backup() e o metodo nativo do better-sqlite3: copia consistente mesmo
+      // com WAL ativo e o banco em uso — nao para a venda pra tirar o backup.
+      await db.backup(resultado.filePath)
+      return { sucesso: true, caminho: resultado.filePath }
+    },
+    async importar() {
+      const resultado = await dialog.showOpenDialog({
+        title: 'Selecionar backup para restaurar',
+        properties: ['openFile'],
+        filters: [{ name: 'Backup TáPedido', extensions: ['db'] }],
+      })
+      if (resultado.canceled || !resultado.filePaths.length) return { sucesso: false, cancelado: true }
+      const origem = resultado.filePaths[0]
+
+      // Confere que e mesmo um banco do TaPedido antes de sobrescrever o atual
+      // — um arquivo errado aqui apaga os dados de verdade sem chance de volta.
+      let valido = false
+      try {
+        const teste = new Database(origem, { readonly: true, fileMustExist: true })
+        valido = !!teste.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='pedidos'`).get()
+        teste.close()
+      } catch { valido = false }
+      if (!valido) return { sucesso: false, erro: 'O arquivo selecionado não parece ser um backup válido do TáPedido.' }
+
+      db.close()
+      // Sidecar do WAL: se ficar para tras, o SQLite tenta reaplicar transacoes
+      // antigas por cima do banco restaurado na proxima abertura.
+      for (const sufixo of ['', '-wal', '-shm']) {
+        try { fs.unlinkSync(dbPath + sufixo) } catch {}
+      }
+      fs.copyFileSync(origem, dbPath)
+
+      // So um processo novo reabre o banco do zero. Trocar o arquivo debaixo de
+      // uma conexao ja aberta neste processo deixaria o app lendo memoria stale.
+      app.relaunch()
+      app.exit(0)
+      return { sucesso: true }
+    },
+  },
+
   // ── Licença ──────────────────────────────────────────────────────────────
   licenca: {
     verificar() {
@@ -1332,6 +1476,18 @@ const dbModule = {
         // Dentro da mesma transacao do pedido: ou a venda e a baixa entram
         // juntas, ou nenhuma das duas entra.
         baixarEstoqueDoPedido(pedidoId, itensNorm)
+
+        // Mesa nao tem telefone real (o campo carrega "mesa-N") e o cliente do
+        // salao nao se identifica — cadastro e so para delivery/retirada.
+        if (tipoEntrega !== 'mesa') {
+          const endereco = campo('enderecoEntrega', 'endereco_entrega') || {}
+          registrarClienteDoPedido({
+            telefone: campo('telefoneCliente', 'telefone_cliente'),
+            nome: campo('nomeCliente', 'nome_cliente'),
+            bairro: campo('bairroEntrega', 'bairro_entrega'),
+            logradouro: endereco.logradouro,
+          })
+        }
         return pedidoId
       })
 
@@ -1436,6 +1592,41 @@ const dbModule = {
     },
   },
 
+  // ── Pedidos de cozinha (item de mesa pedido pelo garcom, antes da conta
+  // fechar) ────────────────────────────────────────────────────────────────
+  pedidosCozinha: {
+    criar(dados) {
+      const result = db.prepare(`
+        INSERT INTO pedidos_cozinha (mesa, nome_item, quantidade, status, criado_em, status_alterado_em)
+        VALUES (?, ?, ?, 'recebido', ?, ?)
+      `).run(dados.mesa, dados.nomeItem, dados.quantidade, agora(), agora())
+      return db.prepare('SELECT * FROM pedidos_cozinha WHERE id = ?').get(result.lastInsertRowid)
+    },
+    // So o de hoje — ticket de cozinha e efemero, nao precisa de historico.
+    listar() {
+      const hoje = new Date().toISOString().split('T')[0]
+      return db.prepare(`
+        SELECT * FROM pedidos_cozinha WHERE date(criado_em) = ? ORDER BY criado_em
+      `).all(hoje)
+    },
+    atualizar(dados) {
+      db.prepare(`
+        UPDATE pedidos_cozinha SET status = ?, status_alterado_em = ? WHERE id = ?
+      `).run(dados.status, agora(), dados.id)
+      return db.prepare('SELECT * FROM pedidos_cozinha WHERE id = ?').get(dados.id)
+    },
+    // Ao fechar a conta, qualquer ticket que a cozinha esqueceu de avancar
+    // vira 'entregue' — sem isto ele ficava preso na esteira depois que a
+    // mesa ja pagou e foi embora.
+    resolverPorMesa(mesa) {
+      db.prepare(`
+        UPDATE pedidos_cozinha SET status = 'entregue', status_alterado_em = ?
+        WHERE mesa = ? AND status NOT IN ('entregue', 'cancelado')
+      `).run(agora(), mesa)
+      return { sucesso: true }
+    },
+  },
+
   // ── Estoque ────────────────────────────────────────────────────────────────
   estoque: {
     listar() {
@@ -1497,23 +1688,32 @@ const dbModule = {
     sessaoAtual() {
       return db.prepare("SELECT * FROM caixa_sessoes WHERE status = 'aberto' LIMIT 1").get()
     },
+    // Historico de aberturas/fechamentos — quem, quando, com quanto. `dias`
+    // conta a partir de hoje; inclui a sessao aberta no momento, se houver.
+    sessoes(dias = 7) {
+      const limite = new Date()
+      limite.setDate(limite.getDate() - dias)
+      return db.prepare(`
+        SELECT * FROM caixa_sessoes WHERE aberto_em >= ? ORDER BY aberto_em DESC
+      `).all(limite.toISOString())
+    },
     abrir(dados) {
       const existente = db.prepare("SELECT * FROM caixa_sessoes WHERE status = 'aberto' LIMIT 1").get()
       // Ja havia caixa aberto: o valorInicial informado e descartado. Sinaliza
       // em vez de fingir que a abertura aconteceu com o valor pedido.
       if (existente) return { ...existente, jaEstavaAberto: true }
       const result = db.prepare(`
-        INSERT INTO caixa_sessoes (aberto_em, valor_inicial, status) VALUES (?, ?, 'aberto')
-      `).run(agora(), dados.valorInicial || 0)
+        INSERT INTO caixa_sessoes (aberto_em, valor_inicial, status, aberto_por) VALUES (?, ?, 'aberto', ?)
+      `).run(agora(), dados.valorInicial || 0, dados.responsavel || null)
       return db.prepare('SELECT * FROM caixa_sessoes WHERE id = ?').get(result.lastInsertRowid)
     },
     fechar(dados) {
       const sessao = db.prepare("SELECT * FROM caixa_sessoes WHERE status = 'aberto' LIMIT 1").get()
       if (!sessao) return { erro: 'Nenhum caixa aberto' }
       db.prepare(`
-        UPDATE caixa_sessoes SET status = 'fechado', fechado_em = ?, valor_final = ?, observacoes = ?
+        UPDATE caixa_sessoes SET status = 'fechado', fechado_em = ?, valor_final = ?, observacoes = ?, fechado_por = ?
         WHERE id = ?
-      `).run(agora(), dados.valorFinal || 0, dados.observacoes || '', sessao.id)
+      `).run(agora(), dados.valorFinal || 0, dados.observacoes || '', dados.responsavel || null, sessao.id)
       return db.prepare('SELECT * FROM caixa_sessoes WHERE id = ?').get(sessao.id)
     },
     sangria(dados) {
@@ -1675,6 +1875,47 @@ const dbModule = {
     },
   },
 
+  // ── Clientes ───────────────────────────────────────────────────────────────
+  clientes: {
+    // Usado no Novo Pedido: telefone preenchido busca o cadastro pra
+    // preencher nome/endereco sozinho, sem o balconista redigitar.
+    buscarPorTelefone(telefone) {
+      const limpo = normalizarTelefone(telefone)
+      if (!limpo) return null
+      return db.prepare('SELECT * FROM clientes WHERE telefone = ?').get(limpo) || null
+    },
+    listar() {
+      return db.prepare('SELECT * FROM clientes ORDER BY atualizado_em DESC').all()
+    },
+    // Cadastro manual, pela tela de Clientes — diferente de registrarClienteDoPedido,
+    // que so roda como efeito colateral de uma venda.
+    criar(dados) {
+      const telefone = normalizarTelefone(dados.telefone)
+      if (!telefone) throw new Error('Telefone e obrigatorio')
+      const existente = db.prepare('SELECT id FROM clientes WHERE telefone = ?').get(telefone)
+      if (existente) throw new Error('Ja existe um cliente com esse telefone')
+      const result = db.prepare(`
+        INSERT INTO clientes (nome, telefone, endereco, bairro, total_pedidos, criado_em, atualizado_em)
+        VALUES (?, ?, ?, ?, 0, ?, ?)
+      `).run(dados.nome || '', telefone, dados.endereco || '', dados.bairro || '', agora(), agora())
+      return db.prepare('SELECT * FROM clientes WHERE id = ?').get(result.lastInsertRowid)
+    },
+    atualizar(dados) {
+      const { id, ...rest } = dados
+      const telefone = rest.telefone !== undefined ? normalizarTelefone(rest.telefone) : undefined
+      db.prepare(`
+        UPDATE clientes SET
+          nome = COALESCE(?, nome),
+          telefone = COALESCE(?, telefone),
+          endereco = COALESCE(?, endereco),
+          bairro = COALESCE(?, bairro),
+          atualizado_em = ?
+        WHERE id = ?
+      `).run(rest.nome ?? null, telefone ?? null, rest.endereco ?? null, rest.bairro ?? null, agora(), id)
+      return db.prepare('SELECT * FROM clientes WHERE id = ?').get(id)
+    },
+  },
+
   // ── Entregadores ───────────────────────────────────────────────────────────
   entregadores: {
     // Por padrao so os ativos: quem chama de dentro da tela de pedidos quer a
@@ -1716,6 +1957,54 @@ const dbModule = {
     // remover a linha faria o historico perder o nome de quem entregou.
     deletar(id) {
       db.prepare('UPDATE entregadores SET ativo = 0 WHERE id = ?').run(id)
+      return { sucesso: true }
+    },
+  },
+
+  // ── Colaboradores ──────────────────────────────────────────────────────────
+  colaboradores: {
+    // Por padrao so os ativos: quem chama pra atribuir abertura/fechamento de
+    // caixa quer so quem esta na ativa. A tela de cadastro pede os inativos junto.
+    listar(incluirInativos = false) {
+      const filtro = incluirInativos ? '' : 'WHERE ativo = 1'
+      return db.prepare(`SELECT * FROM colaboradores ${filtro} ORDER BY ativo DESC, nome`).all()
+    },
+    criar(dados) {
+      if (!dados.nome?.trim()) throw new Error('Nome e obrigatorio')
+      if (!dados.funcao?.trim()) throw new Error('Funcao e obrigatoria')
+      const result = db.prepare(`
+        INSERT INTO colaboradores (nome, funcao, ativo, criado_em) VALUES (?, ?, 1, ?)
+      `).run(dados.nome.trim(), dados.funcao.trim(), agora())
+      return db.prepare('SELECT * FROM colaboradores WHERE id = ?').get(result.lastInsertRowid)
+    },
+    atualizar(dados) {
+      const { id, ...rest } = dados
+      // Mesma whitelist de `entregadores.atualizar`, pelo mesmo motivo: sem ela
+      // o nome da coluna vem do renderer e entra cru na query.
+      const map = { nome: 'nome', funcao: 'funcao', ativo: 'ativo' }
+
+      const colunas = []
+      const valores = []
+      for (const [chave, valor] of Object.entries(rest)) {
+        const coluna = map[chave]
+        if (!coluna) {
+          console.warn('[colaboradores.atualizar] campo ignorado (nao permitido):', chave)
+          continue
+        }
+        colunas.push(`${coluna} = ?`)
+        valores.push(valor)
+      }
+      if (colunas.length === 0) return db.prepare('SELECT * FROM colaboradores WHERE id = ?').get(id)
+
+      valores.push(id)
+      db.prepare(`UPDATE colaboradores SET ${colunas.join(', ')} WHERE id = ?`).run(...valores)
+      return db.prepare('SELECT * FROM colaboradores WHERE id = ?').get(id)
+    },
+    // Desativa em vez de apagar: sessoes antigas de caixa apontam pro nome de
+    // quem abriu/fechou (texto congelado em caixa_sessoes.aberto_por/fechado_por,
+    // nao FK) — apagar o colaborador nao muda historico, so tira ele da lista.
+    deletar(id) {
+      db.prepare('UPDATE colaboradores SET ativo = 0 WHERE id = ?').run(id)
       return { sucesso: true }
     },
   },

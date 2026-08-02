@@ -6,9 +6,11 @@ import Layout from './components/Layout'
 import Ativacao from './pages/Ativacao/Ativacao'
 import LicencaCancelada from './pages/Ativacao/LicencaCancelada'
 import Dashboard from './pages/Dashboard/Dashboard'
+import PDV from './pages/PDV/PDV'
 import Cardapio from './pages/Cardapio/Cardapio'
 import Mesas from './pages/Mesas/Mesas'
 import Delivery from './pages/Delivery/Delivery'
+import Clientes from './pages/Clientes/Clientes'
 import Estoque from './pages/Estoque/Estoque'
 import Caixa from './pages/Caixa/Caixa'
 import Financeiro from './pages/Financeiro/Financeiro'
@@ -99,9 +101,11 @@ function App() {
         <Route path="/" element={<Layout modoDemo={modoDemo} />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<Dashboard />} />
+          <Route path="pdv" element={<PDV />} />
           <Route path="cardapio" element={<Cardapio />} />
           <Route path="mesas" element={<Mesas />} />
           <Route path="delivery" element={<Delivery />} />
+          <Route path="clientes" element={<Clientes />} />
           <Route path="estoque" element={<Estoque />} />
           <Route path="caixa" element={<Caixa />} />
           <Route path="financeiro" element={<Financeiro />} />

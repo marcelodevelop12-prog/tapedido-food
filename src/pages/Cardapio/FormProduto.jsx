@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { X, Plus, Trash2, Upload } from 'lucide-react'
+import toast from 'react-hot-toast'
 import { api } from '../../lib/api'
 
 const isElectron = typeof window !== 'undefined' && window.api
@@ -44,6 +45,20 @@ export default function FormProduto({ produto, onSalvar, onFechar }) {
     } finally {
       setUploadando(false)
     }
+  }
+
+  // Fora do Electron nao existe dialogo nativo de arquivo (window.api.imagem
+  // nao existe); le o arquivo local e guarda como data URL no mesmo campo
+  // `imagem`, que ja aceita URL como texto livre.
+  function handleArquivoLocal(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) { toast.error('Selecione um arquivo de imagem'); return }
+    if (file.size > 2 * 1024 * 1024) { toast.error('Imagem muito grande (máx. 2MB)'); return }
+    const reader = new FileReader()
+    reader.onload = () => set('imagem', reader.result)
+    reader.readAsDataURL(file)
   }
 
   useEffect(() => {
@@ -248,7 +263,7 @@ export default function FormProduto({ produto, onSalvar, onFechar }) {
             <div className="col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">Imagem do Produto</label>
               <div className="flex gap-2">
-                {isElectron && (
+                {isElectron ? (
                   <button
                     type="button"
                     onClick={handleUploadImagem}
@@ -258,6 +273,12 @@ export default function FormProduto({ produto, onSalvar, onFechar }) {
                     <Upload size={15} />
                     {uploadando ? 'Carregando...' : 'Escolher arquivo'}
                   </button>
+                ) : (
+                  <label className="flex items-center gap-2 px-3 py-2 bg-orange-50 border border-orange-300 text-orange-700 rounded-lg text-sm font-medium hover:bg-orange-100 transition-colors whitespace-nowrap cursor-pointer">
+                    <Upload size={15} />
+                    Escolher arquivo
+                    <input type="file" accept="image/*" onChange={handleArquivoLocal} className="hidden" />
+                  </label>
                 )}
                 <input
                   value={form.imagem}

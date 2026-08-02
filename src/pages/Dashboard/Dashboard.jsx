@@ -192,7 +192,7 @@ export default function Dashboard() {
                   </div>
                   <div className="flex items-center gap-2 mt-0.5">
                     <span className="text-xs text-gray-400">
-                      {pedido.tipo_entrega === 'entrega' ? '🛵 Delivery' : pedido.tipo_entrega === 'mesa' ? '🪑 Mesa' : '🏃 Retirada'}
+                      {pedido.tipo_entrega === 'entrega' ? '🛵 Delivery' : pedido.tipo_entrega === 'mesa' ? '🪑 Mesa' : pedido.tipo_entrega === 'balcao' ? '🧾 Balcão' : '🏃 Retirada'}
                     </span>
                     <span className="text-xs text-gray-400">·</span>
                     <span className="text-xs text-gray-400">{formatarHora(pedido.criado_em)}</span>

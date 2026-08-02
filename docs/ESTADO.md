@@ -249,3 +249,182 @@ Features restantes do anúncio, na ordem de risco de reclamação:
    que a Task 2 já preparou.
 5. Cadastro de entregadores (tela) e kanban de delivery de verdade.
 6. Categorias personalizadas, relatório de custo × lucro e exportação em PDF.
+
+## Rodada de ajustes pós-teste (31/07, antes da release)
+
+O usuário testou o app e trouxe 13 itens. Pedido explícito: o item 2
+(estoque como insumo) fica por último porque exige decisão de modelagem —
+os outros 12 entraram nesta sessão.
+
+**Bugs corrigidos, todos com a mesma causa raiz: o mock de
+`src/lib/api.js` (modo browser/preview) guardava dados fixos, sem estado.**
+Cada "ação" no mock devolvia sempre a mesma resposta, então a tela seguinte
+(`carregar()`) sobrescrevia a atualização otimista com o dado velho.
+
+- **Item 9** — Financeiro: `pagarConta`/`receberConta` no mock não mutavam a
+  lista; `contasPagar`/`contasReceber` viraram arrays mutáveis no escopo de
+  `mockApi()`, igual o padrão já usado em `entregadores`/`categorias`.
+- **Item 11** — Caixa: `sessaoAtual()` no mock devolvia sempre uma sessão
+  aberta fixa, e `fechar()` não zerava nada — por isso "reabria sozinho".
+  Agora há um `caixaSessao` mutável; `fechar()` põe `null` e `abrir()` cria
+  sessão nova com totais zerados.
+- **Item 13** — Mesas: o listener `onComandaFechada` (evento vindo do app do
+  garçom via IPC) chamava `api.mesas.listar()` — um replace completo pelo
+  SQLite local, cuja coluna `status` não reflete mesas que o garçom abriu
+  direto no Supabase. Piscava as outras mesas como livres por alguns segundos
+  até o próximo evento corrigir. `useRealtimeMesas` já tem assinatura própria
+  e mais precisa em `comandas`; o listener agora só recarrega `comandas`.
+
+**Backend real (Electron/SQLite) verificado correto nesses três — só o
+mock estava errado.** Não testado ao vivo em Electron desta vez (app não foi
+aberto nesta sessão); os 84 testes de Vitest continuam verdes e o
+`build:react` segue limpo.
+
+**Features novas:**
+
+- **Item 1** — menu lateral: "Pedidos" reordenado para logo após "Dashboard"
+  (`src/components/Layout.jsx`).
+- **Item 3** — logo da loja: campo `lojas.logo` (coluna já existia, nunca
+  usada) recebe upload por `<input type="file">` + `FileReader` → data URL,
+  sem IPC novo. Ainda não é impresso no cupom térmico (`impressao.js` é só
+  texto) — se isso for esperado, é tarefa separada.
+- **Item 4 e 5** — Configurações → Licença perdeu o bloco duplicado (2º
+  "Comprar Licença", "Falar com Suporte", "2ª licença 40% off") e a caixa
+  "Sobre o TáPedido Food" redundante com a aba própria. A aba Sobre passou a
+  mostrar tipo de licença + versão, perdeu a seção Suporte e a frase sobre
+  SQLite; manteve "Verificar Atualizações".
+- **Item 10** — upload de imagem do produto: o caminho Electron
+  (`window.api.imagem.salvar`, diálogo nativo) já existia e funcionava; só
+  não aparecia fora do Electron. Adicionado fallback com
+  `<input type="file">` + data URL para quem testa pelo browser.
+- **Item 8** — responsável do caixa: colunas `caixa_sessoes.aberto_por` /
+  `fechado_por` (migration idempotente), campo obrigatório no modal de
+  abrir/fechar, exibido como "Aberto por" no resumo. Não existe tela de
+  histórico de sessões passadas — ficou só no registro da sessão atual.
+- **Item 7** — cadastro de clientes: tabela `clientes` nova (telefone como
+  chave única). `pedidos.criar` grava/atualiza o cliente sempre que
+  `tipoEntrega !== 'mesa'` (mesa não tem telefone real). No Novo Pedido, sair
+  do campo telefone busca o cadastro e preenche nome/bairro/endereço — só
+  campos vazios, não sobrescreve o que o balconista já digitou.
+- **Item 6** — backup: `db.backup()` nativo do better-sqlite3 (cópia
+  consistente mesmo com WAL ativo) para exportar; restaurar fecha a conexão,
+  apaga os sidecars `-wal`/`-shm`, copia o arquivo escolhido por cima do banco
+  e reinicia o app (`app.relaunch()`) — só um processo novo abre o banco
+  trocado com segurança. Validação mínima antes de sobrescrever: confere que
+  o arquivo tem a tabela `pedidos`. Aba nova em Configurações.
+
+**Item 12** — escopo decidido com o usuário: rateio simples, sem papéis de
+usuário nem login (isso viraria projeto separado, arriscado demais pra
+véspera de lançamento). Implementado em `ModalPagamento` (`Mesas.jsx`):
+contador de pessoas + "valor por pessoa" calculado na hora de fechar a
+conta. Não muda como o pagamento é registrado — continua um total único, uma
+forma de pagamento só; é só o cálculo pra dizer quanto cada um paga.
+
+## Item 2 (parte 1) — editar produto pela tela de Estoque (31/07)
+
+**Causa raiz: não era bug, era funcionalidade que nunca existiu nessa tela.**
+`Estoque.jsx` só tinha "Entrada" e "Ajustar", os dois abrindo
+`ModalMovimentacao` — um formulário de *quantidade*, não de cadastro. Não
+havia nenhum caminho, quebrado ou não, para editar nome/categoria/preço/
+custo/unidade/código de barras/imagem a partir dessa tela. O backend
+`produtos.atualizar` (usado pelo Cardápio) já fazia tudo isso corretamente —
+confirmado por `test/produtos.test.js` (4 testes novos) antes de mexer em
+qualquer UI, para não corrigir algo que já funcionava.
+
+Adicionado botão "Editar" por linha, abrindo o mesmo `FormProduto` que o
+Cardápio usa. Testado ao vivo no browser: editar o preço do X-Burguer pela
+tela de Estoque e ver o novo valor refletido no Cardápio — os dois batem no
+mesmo `menu_items`. 88 testes verdes, `build:react` limpo.
+
+**Modelagem de insumo/ficha técnica (parte 2 do item 2) continua em aberto**
+— usuário pediu para não mexer nisso ainda ("depois voltamos a isso").
+
+## Separação PDV × Pedidos (31/07)
+
+O menu "Pedidos" misturava balcão (catálogo/carrinho/pagamento) com
+acompanhamento pós-venda (esteira Novos/Preparando/Prontos/A Caminho). Só
+navegação mudou — nenhum dado novo, nenhuma tabela nova.
+
+- `src/pages/PDV/PDV.jsx` (novo) — rota `/pdv`, primeiro item do menu, logo
+  após Dashboard. Renderiza o mesmo `NovoPedido` que já existia; ao criar um
+  pedido, remonta via `key` para zerar carrinho e ficar pronta pro próximo
+  cliente sem sair da tela — igual um PDV de verdade, não devolve o
+  balconista pro dashboard a cada venda.
+- `Delivery.jsx` (a tela "Pedidos") perdeu o botão "+ Novo Pedido" e o modal
+  que ele abria — a esteira agora só mostra status. Continua sendo o mesmo
+  componente, mesma leitura de `api.pedidos.listar()`.
+- Testado ao vivo: pedido criado em `/pdv` aparece na coluna "Novos" de
+  `/delivery` sem nenhum passo manual — os dois batem no mesmo `pedidos`
+  local/Supabase, como já batiam antes.
+
+## Rodada de QA com cliente real (31/07 → 01/08, antes da release)
+
+Usuário testou com venda real e trouxe mais três problemas.
+
+**Balcão não devia passar pela esteira de delivery.** Venda presencial (mesa
+ou balcão) já foi aceita no ato — pedir "Aceitar Pedido" depois não faz
+sentido pra esse tipo de negócio. `PDV.jsx` passou a abrir `NovoPedido` com
+`tipoInicial="balcao"`; ao finalizar, `tipo === 'balcao'` pula
+`pedidos.criar` com esteira e vai direto pra `caixa.registrarVendaDelivery`
+(mesmo caminho que mesa usa), com `refExterna` pra não duplicar. Pedido some
+da tela Pedidos e cai direto no caixa.
+
+**Entregador não tinha onde ser atribuído na venda.** Campo opcional
+adicionado em `NovoPedido.jsx`, só aparece pra `tipo === 'entrega'` e só se
+houver entregador cadastrado — não força cadastro pra quem não usa.
+
+**Não existia cadastro de clientes visível.** `src/pages/Clientes/` nova:
+busca, tabela, criar/editar. O backend (`clientes.criar/atualizar`) já
+existia desde o Item 7, só faltava tela.
+
+**Pedido de mesa fechado pelo garçom não virava venda no PDV — bug de
+dinheiro escondido.** `comandas` UPDATE (status→fechada) no
+`supabaseSync.js` lançava no caixa mas nunca chamava `db.pedidos.criar`;
+por isso a venda ficava fora de qualquer relatório que lê `pedidos` (nenhum
+relatório de receita usa essa fonte pra mesa, mas outros consumos, tipo
+histórico de pedidos, ficavam cegos pra ela). Corrigido: o mesmo handler
+agora também cria o `pedidos` com os itens da comanda.
+
+**Itens da comanda não apareciam na esteira em tempo real pro garçom
+acompanhar.** Criada `pedidos_cozinha` — tabela separada, **sem nenhum
+campo de dinheiro**, de propósito: reusar `pedidos`/`itens_pedido` exigiria
+auditar de novo toda query de receita documentada acima. Cada item inserido
+via `comanda_itens` (Supabase) vira uma linha aqui; a esteira (`Delivery.jsx`)
+lê `pedidosCozinha.listar()` junto com `pedidos.listar()` e mostra como
+card (`CardCozinha`) com o fluxo Novo→Preparando→Pronto→Entregar à Mesa.
+Ao fechar a conta (`Mesas.jsx` ou o UPDATE do Supabase), todos os tickets
+da mesa são marcados `entregue` via `pedidosCozinha.resolverPorMesa`.
+Push notification pro app do garçom quando fica "Pronto" — combinado com o
+usuário que fica pra próxima atualização.
+
+**Cadastro de colaboradores.** Tabela `colaboradores` (nome + função),
+funções fixas pré-cadastradas (Garçom/Caixa/Gerente) — tela em
+Configurações, mesmo padrão de `entregadores` (soft-delete). Passam a ser
+selecionáveis ao abrir/fechar caixa, substituindo o campo de texto livre.
+
+**Histórico de Caixa.** `caixa.sessoes(dias)` no backend; seção sempre
+visível na tela de Caixa com filtro 7/15/30 dias — sem isso não havia como
+auditar quem abriu/fechou.
+
+**Estoque também cadastra produto, não só ajusta quantidade.** Botão "Novo
+Produto" adicionado na tela de Estoque, abrindo o mesmo `FormProduto` do
+Cardápio — pra quem pensa em "cadastrar estoque" (refrigerante, cerveja)
+sem passar pela tela de Cardápio.
+
+88 testes verdes, `build:react` limpo. Verificação completa ao vivo (todos
+os fluxos desta rodada) explicitamente adiada pelo usuário pra depois da
+release ("deixa para testar só no final").
+
+## Pendente
+
+- **Item 2 (parte 2)** — decisão de modelagem: `menu_items` hoje é o próprio
+  produto vendável, sem insumo/ficha técnica. Aguardando o usuário — próxima
+  atualização.
+- Push notification pro app do garçom quando o ticket da cozinha fica
+  "Pronto" — próxima atualização.
+- App do garçom aparecendo "Offline" na tela demo: mencionado pelo usuário,
+  não investigado — não ficou claro se é só mock da demonstração ou conexão
+  real quebrada.
+- Verificação end-to-end completa da rodada de QA acima (mesa fechada pelo
+  garçom virando pedido, esteira da cozinha, colaboradores no caixa,
+  histórico) — adiada pelo usuário pra depois da release publicada.

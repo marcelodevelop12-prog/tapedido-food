@@ -44,8 +44,13 @@ export default function Mesas() {
       api.comandas.listarAbertas().then(setComandas).catch(() => {})
     })
     window.api.realtime.onComandaFechada(() => {
+      // So comandas — nao mesas. `useRealtimeMesas` ja tem assinatura propria
+      // em `comandas` que marca a mesa certa como livre, com o status derivado
+      // do Supabase. Recarregar mesas aqui pelo SQLite local reintroduzia o
+      // status default ('livre') de mesas que o garcom abriu direto la, o que
+      // piscava as OUTRAS mesas como livres por alguns segundos ate o proximo
+      // evento corrigir de novo.
       api.comandas.listarAbertas().then(setComandas).catch(() => {})
-      api.mesas.listar().then(setMesas).catch(() => {})
     })
     return () => window.api.realtime.off()
   }, [])
@@ -74,8 +79,22 @@ export default function Mesas() {
       const [m, c] = await Promise.all([api.mesas.listar(), api.comandas.listarAbertas()])
       setMesas(m)
       setComandas(c)
+      return c
     } finally {
       setCarregando(false)
+    }
+  }
+
+  // `comandaAtiva` existe pra cobrir o instante entre abrir uma mesa livre
+  // (comanda nova, ainda fora de `comandas`) e o proximo carregar() — sem
+  // isso, `comanda.id` chegaria undefined pro addItem seguinte. Mas depois de
+  // adicionar ou remover item ela fica com o total velho, porque nada a
+  // atualizava; o painel preferia esse valor parado ao fresco que acabou de
+  // chegar. Buscar de novo e trocar pela linha certa resolve os dois casos.
+  async function atualizarComandaAtiva() {
+    const lista = await carregar()
+    if (mesaSelecionada) {
+      setComandaAtiva(lista.find(c => c.mesa_id === mesaSelecionada.id) || null)
     }
   }
 
@@ -183,6 +202,11 @@ export default function Mesas() {
       console.error('[fecharConta] falha ao registrar pedido da mesa:', err)
       toast.error('Venda no caixa OK, mas não entrou no histórico de pedidos')
     }
+
+    // Ticket de cozinha que o garcom deixou aberto nessa mesa (ex: marcou
+    // "Pronto" mas ninguem clicou "Entregar") nao pode ficar preso na esteira
+    // depois que a mesa ja pagou e foi embora.
+    api.pedidosCozinha.resolverPorMesa(mesa.nome || `Mesa ${mesa.numero}`).catch(() => {})
 
     // Impressao automatica ao fechar conta
     try {
@@ -365,7 +389,7 @@ export default function Mesas() {
               onFechar={() => { setMesaSelecionada(null); setComandaAtiva(null) }}
               onAdicionarItem={() => setMostrarNovoPedido(true)}
               onFecharConta={() => setMostrarPagamento(true)}
-              onAtualizar={carregar}
+              onAtualizar={atualizarComandaAtiva}
             />
           </div>
         </div>
@@ -457,7 +481,7 @@ export default function Mesas() {
           mesa={mesaSelecionada}
           comanda={comandaAtiva || comandaPorMesa(mesaSelecionada.id)}
           onFechar={() => { setMostrarNovoPedido(false); carregar() }}
-          onPedidoCriado={() => { setMostrarNovoPedido(false); carregar() }}
+          onPedidoCriado={() => { setMostrarNovoPedido(false); atualizarComandaAtiva() }}
         />
       )}
     </div>
@@ -558,12 +582,16 @@ function ComandaDetalhe({ mesa, comanda, itensSupabase, carregandoItens, onFecha
 function ModalPagamento({ mesa, comanda, itensSupabase, onCancelar, onConfirmar }) {
   const [formaSelecionada, setFormaSelecionada] = useState(null)
   const [confirmando, setConfirmando] = useState(false)
+  const [pessoas, setPessoas] = useState(1)
 
   const itens = itensSupabase.length > 0
     ? itensSupabase.map(i => ({ ...i, subtotal: i.subtotal ?? (i.preco_unitario * i.quantidade) }))
     : (comanda?.itens || [])
 
   const total = itens.reduce((a, b) => a + (b.subtotal || 0), 0)
+  // So o calculo pra dividir a conta — o pagamento continua registrado como um
+  // total unico, numa forma de pagamento so. Nao existe cobranca fracionada.
+  const valorPorPessoa = pessoas > 0 ? total / pessoas : total
 
   async function confirmar() {
     if (!formaSelecionada) return
@@ -605,6 +633,39 @@ function ModalPagamento({ mesa, comanda, itensSupabase, onCancelar, onConfirmar 
         <div className="px-5 py-3 flex justify-between items-center border-y border-gray-100 mt-3">
           <span className="font-bold text-gray-800">Total</span>
           <span className="font-bold text-orange-600 text-xl">{formatarMoeda(total)}</span>
+        </div>
+
+        {/* Rateio — so o calculo do valor por pessoa, pagamento continua unico */}
+        <div className="px-5 pt-3">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-gray-700 flex items-center gap-1.5">
+              <Users size={14} />
+              Dividir entre
+            </label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPessoas(p => Math.max(1, p - 1))}
+                className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-600 font-bold transition-colors"
+              >
+                −
+              </button>
+              <span className="w-6 text-center font-semibold text-gray-800">{pessoas}</span>
+              <button
+                type="button"
+                onClick={() => setPessoas(p => p + 1)}
+                className="w-7 h-7 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-600 font-bold transition-colors"
+              >
+                +
+              </button>
+            </div>
+          </div>
+          {pessoas > 1 && (
+            <div className="mt-2 flex justify-between items-center bg-orange-50 rounded-lg px-3 py-2">
+              <span className="text-sm text-orange-700">Valor por pessoa ({pessoas}x)</span>
+              <span className="font-bold text-orange-700">{formatarMoeda(valorPorPessoa)}</span>
+            </div>
+          )}
         </div>
 
         {/* Formas de pagamento */}

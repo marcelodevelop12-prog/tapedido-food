@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react'
-import { Save, Plus, Trash2, RefreshCw, Store, Printer, Truck, Info, ShoppingCart, MessageCircle, Pencil, X, Copy, Wifi, WifiOff, Smartphone, RotateCcw } from 'lucide-react'
+import { Save, Plus, Trash2, RefreshCw, Store, Printer, Truck, Info, ShoppingCart, Pencil, X, Copy, Wifi, WifiOff, Smartphone, RotateCcw, Download, Upload, AlertTriangle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { api } from '../../lib/api'
 
 const APP_GARCOM_URL = 'https://tapedido-food-garcom.vercel.app/?reset=1'
+
+// Funcoes pre-cadastradas: aparecem prontas no select do cadastro, sem
+// precisar de uma tela separada so pra gerenciar 3 opcoes fixas.
+const FUNCOES_COLABORADOR = ['Garçom', 'Caixa', 'Gerente']
 
 const isElectron = typeof window !== 'undefined' && window.api
 
@@ -38,6 +42,10 @@ export default function Configuracoes() {
   const [modalEntregador, setModalEntregador] = useState(null) // null | { modo: 'add' | 'edit', entregador?: {} }
   const [formEntregador, setFormEntregador] = useState({ nome: '', telefone: '', veiculo: '', placa: '' })
   const [salvandoEntregador, setSalvandoEntregador] = useState(false)
+  const [colaboradores, setColaboradores] = useState([])
+  const [modalColaborador, setModalColaborador] = useState(null) // null | { modo: 'add' | 'edit', colaborador?: {} }
+  const [formColaborador, setFormColaborador] = useState({ nome: '', funcao: FUNCOES_COLABORADOR[0] })
+  const [salvandoColaborador, setSalvandoColaborador] = useState(false)
 
   // App Garçom
   const [garcons, setGarcons] = useState([])
@@ -47,6 +55,11 @@ export default function Configuracoes() {
   const [formGarcom, setFormGarcom] = useState({ nome: '', codigo: '' })
   const [salvandoGarcom, setSalvandoGarcom] = useState(false)
   const [sincronizando, setSincronizando] = useState(false)
+
+  // Backup
+  const [exportando, setExportando] = useState(false)
+  const [restaurando, setRestaurando] = useState(false)
+  const [confirmarRestauracao, setConfirmarRestauracao] = useState(false)
 
   useEffect(() => {
     carregar()
@@ -95,22 +108,37 @@ export default function Configuracoes() {
 
   async function carregar() {
     try {
-      const [l, c, z, lic, ent] = await Promise.all([
+      const [l, c, z, lic, ent, colab] = await Promise.all([
         api.loja.get(),
         api.config.get(),
         api.zonas.listar(),
         api.licenca.info(),
         // Inclui os desativados: e aqui que o lojista reativa quem voltou.
         api.entregadores.listar(true).catch(() => []),
+        api.colaboradores.listar(true).catch(() => []),
       ])
       setLoja(l || {})
       setConfig(c || {})
       setZonas(z)
       setLicenca(lic)
       setEntregadores(ent || [])
+      setColaboradores(colab || [])
     } finally {
       setCarregando(false)
     }
+  }
+
+  function handleLogoChange(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) { toast.error('Selecione um arquivo de imagem'); return }
+    if (file.size > 2 * 1024 * 1024) { toast.error('Imagem muito grande (máx. 2MB)'); return }
+    // Guarda como data URL direto na coluna `logo` (TEXT): sem upload nem
+    // pasta pra gerenciar, funciona igual ao recibo que ja le esse campo.
+    const reader = new FileReader()
+    reader.onload = () => setLoja(p => ({ ...p, logo: reader.result }))
+    reader.readAsDataURL(file)
   }
 
   async function salvarLoja(e) {
@@ -259,6 +287,56 @@ export default function Configuracoes() {
     } catch { toast.error('Erro ao alterar entregador') }
   }
 
+  function abrirColaboradorAdicionar() {
+    setFormColaborador({ nome: '', funcao: FUNCOES_COLABORADOR[0] })
+    setModalColaborador({ modo: 'add' })
+  }
+
+  function abrirColaboradorEditar(colaborador) {
+    setFormColaborador({
+      nome: colaborador.nome || '',
+      funcao: colaborador.funcao || FUNCOES_COLABORADOR[0],
+    })
+    setModalColaborador({ modo: 'edit', colaborador })
+  }
+
+  async function salvarColaborador(e) {
+    e.preventDefault()
+    if (!formColaborador.nome.trim()) { toast.error('Informe o nome do colaborador'); return }
+    const dados = {
+      nome: formColaborador.nome.trim(),
+      funcao: formColaborador.funcao,
+    }
+    setSalvandoColaborador(true)
+    try {
+      if (modalColaborador.modo === 'add') {
+        const novo = await api.colaboradores.criar(dados)
+        setColaboradores(prev => [...prev, novo])
+        toast.success('Colaborador cadastrado!')
+      } else {
+        const atualizado = await api.colaboradores.atualizar({ id: modalColaborador.colaborador.id, ...dados })
+        setColaboradores(prev => prev.map(x => x.id === atualizado.id ? atualizado : x))
+        toast.success('Colaborador atualizado!')
+      }
+      setModalColaborador(null)
+    } catch { toast.error('Erro ao salvar colaborador') }
+    finally { setSalvandoColaborador(false) }
+  }
+
+  async function alternarColaboradorAtivo(colaborador) {
+    const desativando = colaborador.ativo !== 0
+    if (desativando && !window.confirm(`Desativar ${colaborador.nome}? Ele deixa de aparecer na hora de abrir/fechar o caixa.`)) return
+    try {
+      // Desativa em vez de apagar: sessoes de caixa antigas guardam o nome de
+      // quem abriu/fechou e nao podem perder essa informacao.
+      const atualizado = desativando
+        ? (await api.colaboradores.deletar(colaborador.id), { ...colaborador, ativo: 0 })
+        : await api.colaboradores.atualizar({ id: colaborador.id, ativo: 1 })
+      setColaboradores(prev => prev.map(x => x.id === colaborador.id ? atualizado : x))
+      toast.success(desativando ? 'Colaborador desativado' : 'Colaborador reativado')
+    } catch { toast.error('Erro ao alterar colaborador') }
+  }
+
   async function carregarPortas() {
     try {
       const portas = await (isElectron ? window.api.balanca.listarPortas() : Promise.resolve([]))
@@ -378,16 +456,43 @@ export default function Configuracoes() {
   }
 
 
+  async function exportarBackup() {
+    if (!isElectron) { toast.error('Disponível apenas no aplicativo desktop'); return }
+    setExportando(true)
+    try {
+      const r = await window.api.backup.exportar()
+      if (r?.sucesso) toast.success(`Backup salvo em ${r.caminho}`, { duration: 6000 })
+      else if (!r?.cancelado) toast.error(r?.erro || 'Erro ao exportar backup')
+    } catch { toast.error('Erro ao exportar backup') }
+    finally { setExportando(false) }
+  }
+
+  async function restaurarBackup() {
+    setConfirmarRestauracao(false)
+    if (!isElectron) { toast.error('Disponível apenas no aplicativo desktop'); return }
+    setRestaurando(true)
+    try {
+      const r = await window.api.backup.importar()
+      // Sucesso reinicia o app sozinho (app.relaunch no processo principal) —
+      // esta resposta pode nem chegar a tempo de renderizar de novo.
+      if (r?.sucesso) toast.success('Backup restaurado! Reiniciando o aplicativo...', { duration: 8000 })
+      else if (!r?.cancelado) toast.error(r?.erro || 'Erro ao restaurar backup', { duration: 8000 })
+    } catch { toast.error('Erro ao restaurar backup') }
+    finally { setRestaurando(false) }
+  }
+
   function copiarCodigo(codigo) {
     navigator.clipboard.writeText(codigo).then(() => toast.success('Código copiado!')).catch(() => toast.error('Não foi possível copiar'))
   }
 
   const abas = [
     { key: 'loja',      label: '🏪 Minha Loja' },
+    { key: 'colaboradores', label: '👥 Colaboradores' },
     { key: 'impressora', label: '🖨️ Impressora' },
     { key: 'entrega',   label: '🛵 Entrega' },
     { key: 'balanca',   label: '⚖️ Balança' },
     { key: 'garcom',    label: '📱 App Garçom' },
+    { key: 'backup',    label: '💾 Backup' },
     { key: 'licenca',   label: '🔑 Licença' },
     { key: 'sobre',     label: 'ℹ️ Sobre' },
   ]
@@ -417,6 +522,26 @@ export default function Configuracoes() {
         <form onSubmit={salvarLoja} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-5 max-w-2xl">
           <h3 className="font-semibold text-gray-800">Dados da Loja</h3>
           <div className="grid grid-cols-2 gap-4">
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Logo da Loja</label>
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 rounded-lg border border-gray-200 bg-gray-50 flex items-center justify-center overflow-hidden shrink-0">
+                  {loja.logo ? <img src={loja.logo} alt="Logo da loja" className="w-full h-full object-cover" /> : <Store size={22} className="text-gray-300" />}
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="cursor-pointer text-sm font-medium text-orange-600 hover:text-orange-700 border border-orange-200 hover:bg-orange-50 px-3 py-2 rounded-lg transition-colors">
+                    {loja.logo ? 'Trocar logo' : 'Enviar logo'}
+                    <input type="file" accept="image/*" onChange={handleLogoChange} className="hidden" />
+                  </label>
+                  {loja.logo && (
+                    <button type="button" onClick={() => setLoja(p => ({ ...p, logo: '' }))} className="text-sm text-gray-400 hover:text-red-500 transition-colors">
+                      Remover
+                    </button>
+                  )}
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 mt-1.5">PNG ou JPG, até 2MB.</p>
+            </div>
             <div className="col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">Nome do Estabelecimento *</label>
               <input value={loja.nome || ''} onChange={e => setLoja(p => ({ ...p, nome: e.target.value }))} className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500" required />
@@ -462,6 +587,59 @@ export default function Configuracoes() {
             {salvando ? 'Salvando...' : 'Salvar Dados da Loja'}
           </button>
         </form>
+      )}
+
+      {aba === 'colaboradores' && (
+        <div className="max-w-2xl space-y-5">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="font-semibold text-gray-800">Colaboradores</h3>
+              <button onClick={abrirColaboradorAdicionar} className="flex items-center gap-1.5 text-sm text-orange-600 hover:text-orange-700 font-medium">
+                <Plus size={15} />
+                Adicionar Colaborador
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 mb-4">
+              Quem estiver aqui pode ser atribuído na abertura e no fechamento do caixa.
+            </p>
+            {colaboradores.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">Nenhum colaborador cadastrado</p>
+            ) : (
+              <div className="space-y-2">
+                {colaboradores.map(col => {
+                  const inativo = col.ativo === 0
+                  return (
+                    <div key={col.id} className={`flex items-center justify-between rounded-lg px-3 py-2.5 ${inativo ? 'bg-gray-50 opacity-60' : 'bg-gray-50'}`}>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-800 text-sm">{col.nome}</span>
+                          {inativo && <span className="text-[10px] uppercase font-bold text-gray-500 bg-gray-200 px-1.5 py-0.5 rounded">Inativo</span>}
+                        </div>
+                        <p className="text-xs text-gray-400 truncate">{col.funcao}</p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => abrirColaboradorEditar(col)}
+                          className="text-gray-400 hover:text-blue-600 p-1 rounded transition-colors"
+                          title="Editar colaborador"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          onClick={() => alternarColaboradorAtivo(col)}
+                          className={`text-gray-400 p-1 rounded transition-colors ${inativo ? 'hover:text-green-600' : 'hover:text-red-600'}`}
+                          title={inativo ? 'Reativar colaborador' : 'Desativar colaborador'}
+                        >
+                          {inativo ? <RotateCcw size={14} /> : <Trash2 size={14} />}
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {aba === 'impressora' && (
@@ -791,6 +969,71 @@ export default function Configuracoes() {
         </div>
       )}
 
+      {aba === 'backup' && (
+        <div className="max-w-2xl space-y-5">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-3">
+            <h3 className="font-semibold text-gray-800">Exportar Backup</h3>
+            <p className="text-sm text-gray-500">
+              Salva uma cópia completa dos seus dados (pedidos, cardápio, caixa, clientes...) num arquivo. Guarde em um pendrive ou na nuvem, longe deste computador.
+            </p>
+            <button
+              onClick={exportarBackup}
+              disabled={exportando}
+              className="flex items-center gap-2 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+            >
+              <Download size={16} />
+              {exportando ? 'Salvando...' : 'Exportar Backup'}
+            </button>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-3">
+            <h3 className="font-semibold text-gray-800">Restaurar Backup</h3>
+            <p className="text-sm text-gray-500">
+              Substitui todos os dados atuais pelos de um arquivo de backup. O aplicativo reinicia sozinho ao terminar.
+            </p>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 flex items-start gap-2 text-sm text-amber-700">
+              <AlertTriangle size={16} className="shrink-0 mt-0.5" />
+              <span>Isso apaga os dados atuais do sistema. Não tem como desfazer depois de confirmar.</span>
+            </div>
+            <button
+              onClick={() => setConfirmarRestauracao(true)}
+              disabled={restaurando}
+              className="flex items-center gap-2 border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors"
+            >
+              <Upload size={16} />
+              {restaurando ? 'Restaurando...' : 'Restaurar Backup'}
+            </button>
+          </div>
+
+          {!isElectron && (
+            <p className="text-xs text-center text-gray-400">Backup disponível apenas no aplicativo desktop instalado.</p>
+          )}
+        </div>
+      )}
+
+      {/* Modal confirmar restauração de backup */}
+      {confirmarRestauracao && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-center gap-2 mb-3 text-red-600">
+              <AlertTriangle size={20} />
+              <h3 className="font-bold">Restaurar backup?</h3>
+            </div>
+            <p className="text-sm text-gray-600 mb-6">
+              Todos os dados atuais (pedidos, caixa, cardápio, clientes) serão substituídos pelos do arquivo escolhido. Essa ação não pode ser desfeita e o aplicativo vai reiniciar.
+            </p>
+            <div className="flex gap-3">
+              <button onClick={() => setConfirmarRestauracao(false)} className="flex-1 border border-gray-300 py-2 rounded-lg text-sm font-medium hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button onClick={restaurarBackup} className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2 rounded-lg text-sm font-medium transition-colors">
+                Escolher arquivo e restaurar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {aba === 'licenca' && (
         <div className="max-w-2xl space-y-4">
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -852,44 +1095,6 @@ export default function Configuracoes() {
             </div>
           )}
 
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 space-y-3">
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => abrirUrl('https://www.mercadolivre.com.br/sistema-pdv-restaurante-lanchonete-delivery--app-garcom/up/MLBU3958667031')}
-                className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors"
-              >
-                <ShoppingCart size={15} />
-                Comprar Licença — R$ 78,90
-              </button>
-              <button
-                onClick={() => abrirUrl('https://wa.me/5521992791713')}
-                className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors"
-              >
-                <MessageCircle size={15} />
-                Falar com Suporte
-              </button>
-            </div>
-            <button
-              onClick={() => abrirUrl('https://wa.me/5521992791713')}
-              className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors"
-            >
-              <MessageCircle size={15} />
-              Adquira sua 2ª licença com 40% de desconto
-            </button>
-          </div>
-
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 text-sm text-gray-500">
-            <p className="font-semibold text-gray-700 mb-2">ℹ️ Sobre o TáPedido Food</p>
-            <p>Versão 1.0.0 · Sistema PDV para pequenos negócios alimentícios</p>
-            <p className="mt-1">Funciona 100% offline após a ativação. Banco de dados local (SQLite).</p>
-            <button
-              onClick={() => abrirUrl('https://wa.me/5521992791713')}
-              className="mt-2 flex items-center gap-2 text-green-600 hover:text-green-700 font-medium transition-colors"
-            >
-              <MessageCircle size={15} />
-              Suporte via WhatsApp incluso na compra
-            </button>
-          </div>
         </div>
       )}
       {aba === 'garcom' && (
@@ -1246,16 +1451,76 @@ export default function Configuracoes() {
         </div>
       )}
 
+      {modalColaborador && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-bold text-gray-800 text-lg">
+                {modalColaborador.modo === 'add' ? 'Adicionar Colaborador' : 'Editar Colaborador'}
+              </h3>
+              <button onClick={() => setModalColaborador(null)} className="text-gray-400 hover:text-gray-600 p-1 rounded-lg transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={salvarColaborador} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nome *</label>
+                <input
+                  type="text"
+                  value={formColaborador.nome}
+                  onChange={e => setFormColaborador(p => ({ ...p, nome: e.target.value }))}
+                  placeholder="Ex: Maria"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Função *</label>
+                <select
+                  value={formColaborador.funcao}
+                  onChange={e => setFormColaborador(p => ({ ...p, funcao: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
+                >
+                  {FUNCOES_COLABORADOR.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setModalColaborador(null)}
+                  className="flex-1 px-4 py-2.5 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={salvandoColaborador}
+                  className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                >
+                  {salvandoColaborador ? 'Salvando...' : modalColaborador.modo === 'add' ? 'Adicionar' : 'Salvar'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {aba === 'sobre' && (
         <div className="max-w-xl space-y-5">
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 text-center space-y-4">
             <div className="text-5xl">🍔</div>
             <div>
               <h3 className="text-xl font-bold text-gray-800">TáPedido Food</h3>
-              <p className="text-sm text-gray-500 mt-1">Versão {versaoApp}</p>
+              <p className="text-sm text-gray-500 mt-1">
+                {licenca?.modo_demo ? '⚠️ Modo Demonstração' : '✅ Licença Ativa'} · Versão {versaoApp}
+              </p>
             </div>
             <p className="text-sm text-gray-600 leading-relaxed">
-              Sistema PDV completo para pequenos negócios alimentícios. Funciona 100% offline após a ativação. Banco de dados local (SQLite).
+              Sistema PDV completo para pequenos negócios alimentícios.
             </p>
             <div className="pt-2 border-t border-gray-100">
               <button
@@ -1278,30 +1543,6 @@ export default function Configuracoes() {
               )}
             </div>
           </div>
-
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 space-y-3">
-            <h4 className="font-semibold text-gray-700 text-sm">Suporte</h4>
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => abrirUrl('https://wa.me/5521992791713')}
-                className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors"
-              >
-                <MessageCircle size={15} />
-                Suporte via WhatsApp
-              </button>
-              <button
-                onClick={() => abrirUrl('https://www.mercadolivre.com.br/sistema-pdv-restaurante-lanchonete-delivery--app-garcom/up/MLBU3958667031')}
-                className="flex items-center gap-2 bg-yellow-400 hover:bg-yellow-500 text-yellow-900 font-semibold px-4 py-2.5 rounded-lg text-sm transition-colors"
-              >
-                <ShoppingCart size={15} />
-                Comprar Licença — R$ 78,90
-              </button>
-            </div>
-          </div>
-
-          <p className="text-xs text-center text-gray-400">
-            Licença vitalícia · Pagamento único · Atualizações incluídas
-          </p>
         </div>
       )}
     </div>

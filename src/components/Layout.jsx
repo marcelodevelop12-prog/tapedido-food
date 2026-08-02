@@ -1,17 +1,19 @@
 import React, { useEffect, useState } from 'react'
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
 import {
-  LayoutDashboard, BookOpen, Grid3X3, Truck, Package,
-  DollarSign, TrendingUp, BarChart2, Settings, ChevronLeft, ChevronRight
+  LayoutDashboard, ShoppingCart, BookOpen, Grid3X3, Truck, Package,
+  DollarSign, TrendingUp, BarChart2, Settings, ChevronLeft, ChevronRight, Users
 } from 'lucide-react'
 import { api } from '../lib/api'
 import UpdateNotification from './UpdateNotification'
 
 const navItems = [
   { path: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  { path: '/pdv', icon: ShoppingCart, label: 'PDV' },
+  { path: '/delivery', icon: Truck, label: 'Pedidos' },
+  { path: '/clientes', icon: Users, label: 'Clientes' },
   { path: '/cardapio', icon: BookOpen, label: 'Cardápio' },
   { path: '/mesas', icon: Grid3X3, label: 'Mesas' },
-  { path: '/delivery', icon: Truck, label: 'Pedidos' },
   { path: '/estoque', icon: Package, label: 'Estoque' },
   { path: '/caixa', icon: DollarSign, label: 'Caixa' },
   { path: '/financeiro', icon: TrendingUp, label: 'Financeiro' },

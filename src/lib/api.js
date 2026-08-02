@@ -56,8 +56,61 @@ function mockApi() {
     { id: 1, nome: 'Carlos Moto', telefone: '(21) 99888-7766', veiculo: 'Moto Honda CG 160', placa: 'KXR-2B18', ativo: 1 },
     { id: 2, nome: 'Pedro Bike', telefone: '(21) 99777-5544', veiculo: 'Bicicleta elétrica', placa: '', ativo: 1 },
   ]
+  let colaboradores = [
+    { id: 1, nome: 'Ana (gerente)', funcao: 'Gerente', ativo: 1 },
+    { id: 2, nome: 'Bruno (caixa)', funcao: 'Caixa', ativo: 1 },
+  ]
+  let contasPagar = [
+    { id: 1, descricao: 'Aluguel do estabelecimento', valor: 1800, vencimento: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0], status: 'pendente', categoria: 'Aluguel' },
+    { id: 2, descricao: 'Conta de energia elétrica', valor: 380, vencimento: new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0], status: 'pendente', categoria: 'Utilidades' },
+    { id: 3, descricao: 'Fornecedor Bom Sabor - carnes', valor: 720, vencimento: new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0], status: 'pendente', categoria: 'Fornecedores' },
+  ]
+  let contasReceber = [
+    { id: 1, descricao: 'Evento corporativo - empresa XYZ', valor: 450, vencimento: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0], status: 'pendente' },
+  ]
+  let caixaSessao = {
+    id: 1, aberto_em: new Date(Date.now() - 28800000).toISOString(), aberto_por: 'Ana (gerente)',
+    valor_inicial: 100,
+    total_dinheiro: 82, total_pix: 116, total_debito: 41, total_credito: 63,
+    total_sangria: 0, total_suprimento: 0, status: 'aberto',
+  }
+  let caixaSessoesHistorico = [
+    {
+      id: 90, status: 'fechado',
+      aberto_em: new Date(Date.now() - 2 * 86400000).toISOString(),
+      fechado_em: new Date(Date.now() - 2 * 86400000 + 30600000).toISOString(),
+      aberto_por: 'Bruno (caixa)', fechado_por: 'Bruno (caixa)',
+      valor_inicial: 100, valor_final: 512,
+      total_dinheiro: 210, total_pix: 150, total_debito: 30, total_credito: 22,
+      total_sangria: 0, total_suprimento: 0,
+    },
+  ]
+  let lojaMock = { nome: 'Sabor da Vila', cidade: 'Nova Iguaçu', estado: 'RJ', telefone: '(21) 99999-1234', pix_chave: 'saborvila@pix.com', logo: '' }
+  let clientesMock = []
+
+  function registrarClienteMock({ telefone, nome, bairro, endereco }) {
+    const limpo = String(telefone || '').replace(/\D/g, '')
+    if (!limpo) return
+    const existente = clientesMock.find(c => c.telefone === limpo)
+    if (existente) {
+      existente.nome = nome || existente.nome
+      existente.bairro = bairro || existente.bairro
+      existente.endereco = endereco || existente.endereco
+      existente.total_pedidos += 1
+      existente.atualizado_em = new Date().toISOString()
+    } else {
+      clientesMock.unshift({
+        id: Date.now(), telefone: limpo, nome: nome || '', bairro: bairro || '', endereco: endereco || '',
+        total_pedidos: 1, criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString(),
+      })
+    }
+  }
 
   return {
+    backup: {
+      exportar: async () => ({ sucesso: false, erro: 'Disponível apenas no aplicativo desktop' }),
+      importar: async () => ({ sucesso: false, erro: 'Disponível apenas no aplicativo desktop' }),
+    },
     licenca: {
       verificar: async () => ({ ativa: true, demo: true }),
       ativar: async () => ({ sucesso: false, erro: 'Use a versão desktop para ativar' }),
@@ -67,8 +120,8 @@ function mockApi() {
       info: async () => ({ chave: 'DEMO', modo_demo: 1 }),
     },
     loja: {
-      get: async () => ({ nome: 'Sabor da Vila', cidade: 'Nova Iguaçu', estado: 'RJ', telefone: '(21) 99999-1234', pix_chave: 'saborvila@pix.com' }),
-      update: async (d) => d,
+      get: async () => lojaMock,
+      update: async (d) => { lojaMock = { ...lojaMock, ...d }; return lojaMock },
     },
     produtos: {
       listar: async () => produtos,
@@ -124,7 +177,19 @@ function mockApi() {
     },
     pedidos: {
       listar: async () => pedidos,
-      criar: async (d) => { const n = { ...d, id: Date.now(), numero_pedido: pedidos.length + 1, status: 'recebido', criado_em: new Date().toISOString() }; pedidos.unshift(n); return n },
+      criar: async (d) => {
+        const n = { ...d, id: Date.now(), numero_pedido: pedidos.length + 1, status: d.status || 'recebido', criado_em: new Date().toISOString() }
+        pedidos.unshift(n)
+        if (d.tipoEntrega !== 'mesa') {
+          registrarClienteMock({
+            telefone: d.telefoneCliente,
+            nome: d.nomeCliente,
+            bairro: d.bairroEntrega,
+            endereco: d.enderecoEntrega?.logradouro || '',
+          })
+        }
+        return n
+      },
       atualizar: async (d) => {
         const i = pedidos.findIndex(p => p.id === d.id)
         if (i < 0) return null
@@ -146,6 +211,13 @@ function mockApi() {
         ticketMedio: 47.81,
       }),
     },
+    // So existe de verdade no Electron (vem do app do garcom via Supabase);
+    // no preview de navegador nao ha o que mostrar.
+    pedidosCozinha: {
+      listar: async () => [],
+      atualizar: async (d) => d,
+      resolverPorMesa: async () => ({ sucesso: true }),
+    },
     estoque: {
       listar: async () => produtos,
       movimentar: async (d) => { const p = produtos.find(p => p.id === d.menuItemId); if (p && d.tipo === 'entrada') p.estoque_atual += d.quantidade; return p },
@@ -153,29 +225,59 @@ function mockApi() {
       historico: async () => [],
     },
     caixa: {
-      sessaoAtual: async () => ({ id: 1, aberto_em: new Date(Date.now() - 28800000).toISOString(), valor_inicial: 100, total_dinheiro: 82, total_pix: 116, total_debito: 41, total_credito: 63, total_sangria: 0, total_suprimento: 0, status: 'aberto' }),
-      abrir: async (d) => ({ id: Date.now(), ...d, status: 'aberto', aberto_em: new Date().toISOString() }),
-      fechar: async () => ({ sucesso: true }),
+      // Sem estado aqui, fechar() nunca esvaziava a sessao e o caixa parecia
+      // reabrir sozinho, ja com os totais de antes do fechamento.
+      sessaoAtual: async () => (caixaSessao?.status === 'aberto' ? caixaSessao : null),
+      sessoes: async (dias = 7) => {
+        const limite = Date.now() - dias * 86400000
+        const todas = [caixaSessao, ...caixaSessoesHistorico].filter(Boolean)
+        return todas.filter(s => new Date(s.aberto_em).getTime() >= limite)
+      },
+      abrir: async (d) => {
+        caixaSessao = {
+          id: Date.now(), status: 'aberto', aberto_em: new Date().toISOString(),
+          valor_inicial: d.valorInicial || 0, aberto_por: d.responsavel || '',
+          total_dinheiro: 0, total_pix: 0, total_debito: 0, total_credito: 0,
+          total_sangria: 0, total_suprimento: 0,
+        }
+        return caixaSessao
+      },
+      fechar: async (d) => {
+        const fechada = caixaSessao ? { ...caixaSessao, status: 'fechado', fechado_em: new Date().toISOString(), valor_final: d?.valorFinal || 0, observacoes: d?.observacoes || '', fechado_por: d?.responsavel || '' } : null
+        if (fechada) caixaSessoesHistorico = [fechada, ...caixaSessoesHistorico]
+        caixaSessao = null
+        return fechada || { sucesso: true }
+      },
       registrarVenda: async () => ({ sucesso: true }),
       registrarVendaDelivery: async () => ({ sucesso: true }),
-      sangria: async () => ({ sucesso: true }),
-      suprimento: async () => ({ sucesso: true }),
+      sangria: async (d) => { if (caixaSessao) caixaSessao.total_sangria += Number(d.valor) || 0; return { sucesso: true } },
+      suprimento: async (d) => { if (caixaSessao) caixaSessao.total_suprimento += Number(d.valor) || 0; return { sucesso: true } },
       movimentacoes: async () => [],
       resumo: async () => ({ sessao: {}, movimentacoes: [], totalVendas: 302 }),
     },
     financeiro: {
-      contasPagar: async () => [
-        { id: 1, descricao: 'Aluguel do estabelecimento', valor: 1800, vencimento: new Date(Date.now() + 5 * 86400000).toISOString().split('T')[0], status: 'pendente', categoria: 'Aluguel' },
-        { id: 2, descricao: 'Conta de energia elétrica', valor: 380, vencimento: new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0], status: 'pendente', categoria: 'Utilidades' },
-        { id: 3, descricao: 'Fornecedor Bom Sabor - carnes', valor: 720, vencimento: new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0], status: 'pendente', categoria: 'Fornecedores' },
-      ],
-      contasReceber: async () => [
-        { id: 1, descricao: 'Evento corporativo - empresa XYZ', valor: 450, vencimento: new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0], status: 'pendente' },
-      ],
-      criarContaPagar: async (d) => ({ ...d, id: Date.now(), status: 'pendente' }),
-      criarContaReceber: async (d) => ({ ...d, id: Date.now(), status: 'pendente' }),
-      pagarConta: async () => ({ sucesso: true }),
-      receberConta: async () => ({ sucesso: true }),
+      contasPagar: async () => contasPagar,
+      contasReceber: async () => contasReceber,
+      criarContaPagar: async (d) => {
+        const nova = { ...d, id: Date.now(), status: 'pendente' }
+        contasPagar = [nova, ...contasPagar]
+        return nova
+      },
+      criarContaReceber: async (d) => {
+        const nova = { ...d, id: Date.now(), status: 'pendente' }
+        contasReceber = [nova, ...contasReceber]
+        return nova
+      },
+      // Sem mutar a lista, carregar() (chamado logo depois) devolvia a conta
+      // com status antigo e ela "voltava" pra pendente.
+      pagarConta: async (id) => {
+        contasPagar = contasPagar.map(c => c.id === id ? { ...c, status: 'pago', pago_em: new Date().toISOString() } : c)
+        return { sucesso: true }
+      },
+      receberConta: async (id) => {
+        contasReceber = contasReceber.map(c => c.id === id ? { ...c, status: 'recebido', recebido_em: new Date().toISOString() } : c)
+        return { sucesso: true }
+      },
       fluxoCaixa: async () => ({ entradas: 3820, saidas: 2900, saldo: 920 }),
     },
     fornecedores: {
@@ -186,6 +288,31 @@ function mockApi() {
       ],
       criar: async (d) => ({ ...d, id: Date.now() }),
       atualizar: async (d) => d,
+    },
+    clientes: {
+      buscarPorTelefone: async (telefone) => {
+        const limpo = String(telefone || '').replace(/\D/g, '')
+        if (!limpo) return null
+        return clientesMock.find(c => c.telefone === limpo) || null
+      },
+      listar: async () => clientesMock,
+      criar: async (d) => {
+        const limpo = String(d.telefone || '').replace(/\D/g, '')
+        if (!limpo) throw new Error('Telefone é obrigatório')
+        if (clientesMock.find(c => c.telefone === limpo)) throw new Error('Já existe um cliente com esse telefone')
+        const n = {
+          id: Date.now(), telefone: limpo, nome: d.nome || '', bairro: d.bairro || '', endereco: d.endereco || '',
+          total_pedidos: 0, criado_em: new Date().toISOString(), atualizado_em: new Date().toISOString(),
+        }
+        clientesMock.unshift(n)
+        return n
+      },
+      atualizar: async (d) => {
+        const i = clientesMock.findIndex(c => c.id === d.id)
+        if (i < 0) return null
+        clientesMock[i] = { ...clientesMock[i], ...d, atualizado_em: new Date().toISOString() }
+        return clientesMock[i]
+      },
     },
     entregadores: {
       listar: async (incluirInativos) =>
@@ -203,6 +330,25 @@ function mockApi() {
       deletar: async (id) => {
         const i = entregadores.findIndex(e => e.id === id)
         if (i >= 0) entregadores[i] = { ...entregadores[i], ativo: 0 }
+        return { sucesso: true }
+      },
+    },
+    colaboradores: {
+      listar: async (incluirInativos) =>
+        colaboradores.filter(c => incluirInativos || c.ativo !== 0),
+      criar: async (d) => {
+        const n = { ...d, id: Date.now(), ativo: 1 }
+        colaboradores.push(n)
+        return n
+      },
+      atualizar: async (d) => {
+        const i = colaboradores.findIndex(c => c.id === d.id)
+        if (i >= 0) colaboradores[i] = { ...colaboradores[i], ...d }
+        return colaboradores[i]
+      },
+      deletar: async (id) => {
+        const i = colaboradores.findIndex(c => c.id === id)
+        if (i >= 0) colaboradores[i] = { ...colaboradores[i], ativo: 0 }
         return { sucesso: true }
       },
     },

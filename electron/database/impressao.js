@@ -80,6 +80,7 @@ function montarCupom(dados, loja, colunas) {
   divisor()
 
   const tipo = dados.tipo === 'mesa' ? 'Mesa'
+    : dados.tipo === 'balcao' ? 'Balcão'
     : dados.tipo === 'entrega' ? 'Delivery'
     : dados.tipo === 'retirada' ? 'Retirada'
     : 'Pedido'

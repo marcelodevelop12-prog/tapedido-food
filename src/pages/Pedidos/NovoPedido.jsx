@@ -35,11 +35,12 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
   const [categoriaAtiva, setCategoriaAtiva] = useState('Todos')
   const [busca, setBusca] = useState('')
   const [carrinho, setCarrinho] = useState([])
-  const [tipo, setTipo] = useState(tipoInicial === 'mesa' ? 'mesa' : 'entrega')
+  const [tipo, setTipo] = useState(tipoInicial === 'mesa' || tipoInicial === 'balcao' ? tipoInicial : 'entrega')
   const [zonas, setZonas] = useState([])
+  const [entregadores, setEntregadores] = useState([])
   const [form, setForm] = useState({
     nomeCliente: '', telefone: '', bairro: '', logradouro: '', complemento: '',
-    formaPagamento: 'pix', trocoPara: '', observacoes: '',
+    formaPagamento: 'pix', trocoPara: '', observacoes: '', entregadorId: '',
   })
   const [modalMeioMeio, setModalMeioMeio] = useState(null)
   const [modalPeso, setModalPeso] = useState(null)
@@ -53,6 +54,7 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
       setProdutos(p.filter(prod => prod.disponivel))
       setZonas(z)
     })
+    api.entregadores.listar().then(setEntregadores).catch(() => setEntregadores([]))
     api.config.get().then(c => setPedidoMinimo(Number(c?.pedido_minimo) || 0)).catch(() => {})
   }, [])
 
@@ -228,6 +230,25 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
     }).filter(Boolean))
   }
 
+  // Cliente ja cadastrado (compra anterior) preenche nome/endereco sozinho.
+  // So sobrescreve o que ainda esta vazio: o balconista pode ter digitado um
+  // endereco diferente de proposito (encomenda pro trabalho, por exemplo).
+  async function buscarClientePorTelefone() {
+    const tel = form.telefone.trim()
+    if (!tel) return
+    try {
+      const cliente = await api.clientes.buscarPorTelefone(tel)
+      if (!cliente) return
+      setForm(p => ({
+        ...p,
+        nomeCliente: p.nomeCliente || cliente.nome || p.nomeCliente,
+        bairro: p.bairro || cliente.bairro || p.bairro,
+        logradouro: p.logradouro || cliente.endereco || p.logradouro,
+      }))
+      toast.success(`Cliente encontrado: ${cliente.nome || tel}`, { duration: 1500 })
+    } catch { /* busca falhou, segue com o formulario vazio */ }
+  }
+
   async function finalizar() {
     if (carrinho.length === 0) { toast.error('Adicione ao menos um item'); return }
     if (tipo === 'entrega' && !form.nomeCliente) { toast.error('Informe o nome do cliente'); return }
@@ -255,7 +276,13 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
         }
         toast.success('Itens adicionados à comanda!')
       } else {
-        await api.pedidos.criar({
+        // Balcão é venda presencial já concluída na hora — diferente de
+        // entrega/retirada, que ainda vão passar pela cozinha antes de virar
+        // dinheiro. Por isso nasce direto 'entregue' e lança no caixa aqui
+        // mesmo, sem esperar alguém andar a esteira de Pedidos (era isso que
+        // fazia o dinheiro do balcão sumir do caixa até alguém clicar 4 vezes
+        // numa tela separada).
+        const pedidoCriado = await api.pedidos.criar({
           nomeCliente: form.nomeCliente,
           telefoneCliente: tipo === 'mesa' ? 'mesa-' + (mesa?.numero ?? mesa?.id ?? 'X') : form.telefone,
           tipoEntrega: tipo,
@@ -263,13 +290,29 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
           formaPagamento: form.formaPagamento,
           trocoPara: form.formaPagamento === 'dinheiro' && form.trocoPara ? parseFloat(form.trocoPara) : null,
           bairroEntrega: form.bairro,
+          entregadorId: form.entregadorId || null,
           taxaEntrega,
           subtotal,
           total,
           observacoes: form.observacoes,
           itens: carrinho,
+          status: tipo === 'balcao' ? 'entregue' : undefined,
         })
-        toast.success('Pedido criado!')
+
+        if (tipo === 'balcao') {
+          const resultado = await api.caixa.registrarVendaDelivery({
+            valor: total,
+            formaPagamento: form.formaPagamento,
+            descricao: `Balcão #${pedidoCriado?.numero_pedido ?? ''}`,
+            refExterna: `pedido:${pedidoCriado.id}`,
+          })
+          if (resultado?.erro) {
+            toast.error(`Venda registrada, mas não entrou no caixa: ${resultado.erro}`, { duration: 8000 })
+          }
+          toast.success('Venda registrada!')
+        } else {
+          toast.success('Pedido criado!')
+        }
       }
       onPedidoCriado?.()
     } catch {
@@ -307,6 +350,7 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
           {!mesa && (
             <div className="flex gap-2">
               {[
+                { value: 'balcao',   label: '🧾 Balcão' },
                 { value: 'entrega',  label: '🛵 Delivery' },
                 { value: 'retirada', label: '🏃 Retirada' },
               ].map(t => (
@@ -480,6 +524,7 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
               <input
                 value={form.telefone}
                 onChange={e => setForm(p => ({ ...p, telefone: e.target.value }))}
+                onBlur={buscarClientePorTelefone}
                 placeholder="Telefone"
                 className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
               />
@@ -509,6 +554,18 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
                     placeholder="Complemento (opcional)"
                     className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
                   />
+                  {entregadores.length > 0 && (
+                    <select
+                      value={form.entregadorId}
+                      onChange={e => setForm(p => ({ ...p, entregadorId: e.target.value }))}
+                      className="w-full px-3 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-orange-500 bg-white"
+                    >
+                      <option value="">Entregador (definir depois)</option>
+                      {entregadores.map(e => (
+                        <option key={e.id} value={e.id}>{e.nome}</option>
+                      ))}
+                    </select>
+                  )}
                 </>
               )}
               <textarea
@@ -582,7 +639,9 @@ export default function NovoPedido({ tipoInicial = 'delivery', mesa, comanda, on
               ? 'Salvando...'
               : tipo === 'mesa'
                 ? `Adicionar à Comanda — ${formatarMoeda(total)}`
-                : `Confirmar Pedido — ${formatarMoeda(total)}`}
+                : tipo === 'balcao'
+                  ? `Finalizar Venda — ${formatarMoeda(total)}`
+                  : `Confirmar Pedido — ${formatarMoeda(total)}`}
           </button>
         </div>
 

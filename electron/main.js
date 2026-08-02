@@ -74,6 +74,10 @@ app.whenReady().then(() => {
     console.error('[startup] renovarSessaoSupabase falhou:', e.message)
   })
 
+  // Backup
+  ipcMain.handle('backup:exportar', () => db.backup.exportar())
+  ipcMain.handle('backup:importar', () => db.backup.importar())
+
   // Licença
   ipcMain.handle('licenca:verificar', () => db.licenca.verificar())
   ipcMain.handle('licenca:ativar', (_, chave) => db.licenca.ativar(chave))
@@ -173,6 +177,11 @@ app.whenReady().then(() => {
   ipcMain.handle('pedidos:getById', (_, id) => db.pedidos.getById(id))
   ipcMain.handle('pedidos:dashboard', (_, periodo) => db.pedidos.dashboard(periodo))
 
+  // Pedidos de cozinha (tickets de item de mesa vindos do garcom)
+  ipcMain.handle('pedidosCozinha:listar', () => db.pedidosCozinha.listar())
+  ipcMain.handle('pedidosCozinha:atualizar', (_, dados) => db.pedidosCozinha.atualizar(dados))
+  ipcMain.handle('pedidosCozinha:resolverPorMesa', (_, mesa) => db.pedidosCozinha.resolverPorMesa(mesa))
+
   // Estoque
   ipcMain.handle('estoque:listar', () => db.estoque.listar())
   ipcMain.handle('estoque:movimentar', (_, dados) => db.estoque.movimentar(dados))
@@ -181,6 +190,7 @@ app.whenReady().then(() => {
 
   // Caixa
   ipcMain.handle('caixa:sessaoAtual', () => db.caixa.sessaoAtual())
+  ipcMain.handle('caixa:sessoes', (_, dias) => db.caixa.sessoes(dias))
   ipcMain.handle('caixa:abrir', (_, dados) => db.caixa.abrir(dados))
   ipcMain.handle('caixa:fechar', (_, dados) => db.caixa.fechar(dados))
   ipcMain.handle('caixa:registrarVenda', (_, dados) => db.caixa.registrarVenda(dados))
@@ -204,11 +214,23 @@ app.whenReady().then(() => {
   ipcMain.handle('fornecedores:criar', (_, dados) => db.fornecedores.criar(dados))
   ipcMain.handle('fornecedores:atualizar', (_, dados) => db.fornecedores.atualizar(dados))
 
+  // Clientes
+  ipcMain.handle('clientes:buscarPorTelefone', (_, telefone) => db.clientes.buscarPorTelefone(telefone))
+  ipcMain.handle('clientes:listar', () => db.clientes.listar())
+  ipcMain.handle('clientes:criar', (_, dados) => db.clientes.criar(dados))
+  ipcMain.handle('clientes:atualizar', (_, dados) => db.clientes.atualizar(dados))
+
   // Entregadores
   ipcMain.handle('entregadores:listar', (_, incluirInativos) => db.entregadores.listar(incluirInativos))
   ipcMain.handle('entregadores:criar', (_, dados) => db.entregadores.criar(dados))
   ipcMain.handle('entregadores:atualizar', (_, dados) => db.entregadores.atualizar(dados))
   ipcMain.handle('entregadores:deletar', (_, id) => db.entregadores.deletar(id))
+
+  // Colaboradores
+  ipcMain.handle('colaboradores:listar', (_, incluirInativos) => db.colaboradores.listar(incluirInativos))
+  ipcMain.handle('colaboradores:criar', (_, dados) => db.colaboradores.criar(dados))
+  ipcMain.handle('colaboradores:atualizar', (_, dados) => db.colaboradores.atualizar(dados))
+  ipcMain.handle('colaboradores:deletar', (_, id) => db.colaboradores.deletar(id))
 
   // Zonas de entrega
   ipcMain.handle('zonas:listar', () => db.zonas.listar())
